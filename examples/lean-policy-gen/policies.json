@@ -1,0 +1,35 @@
+{"templates": {},
+ "templateLinks": [],
+ "staticPolicies":
+ {"pypi-simple":
+  {"resource": {"op": "==", "entity": {"type": "Host", "id": "pypi.org"}},
+   "principal": {"op": "==", "entity": {"type": "Agent", "id": "vm-build"}},
+   "effect": "permit",
+   "conditions":
+   [{"kind": "when",
+     "body":
+     {"like":
+      {"pattern":
+       [{"Literal": "/"},
+        {"Literal": "s"},
+        {"Literal": "i"},
+        {"Literal": "m"},
+        {"Literal": "p"},
+        {"Literal": "l"},
+        {"Literal": "e"},
+        {"Literal": "/"},
+        "Wildcard"],
+       "left": {".": {"left": {"Var": "context"}, "attr": "path"}}}}}],
+   "action": {"op": "==", "entity": {"type": "Action", "id": "http_get"}}},
+  "github-readonly":
+  {"resource": {"op": "==", "entity": {"type": "Host", "id": "api.github.com"}},
+   "principal": {"op": "All"},
+   "effect": "permit",
+   "conditions": [],
+   "action": {"op": "==", "entity": {"type": "Action", "id": "http_get"}}},
+  "forbid-admin":
+  {"resource": {"op": "==", "entity": {"type": "Host", "id": "admin.internal"}},
+   "principal": {"op": "All"},
+   "effect": "forbid",
+   "conditions": [],
+   "action": {"op": "All"}}}}

@@ -2,3 +2,4 @@
 /docs/user/node_modules
 /docs/user/.vitepress/cache
 /docs/user/.vitepress/dist
+/examples/lean-policy-gen/.lake

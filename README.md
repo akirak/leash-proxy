@@ -30,5 +30,7 @@ $ npm run build --prefix docs/user     # static build into docs/user/.vitepress/
 ## Repository layout
 
 - [`rust/`](rust/) — the proxy library (`leash_proxy`) and binary (`leash-proxy`)
+- [`examples/lean-policy-gen/`](examples/lean-policy-gen/) — Lean 4 example
+  that generates a Cedar policy set in the JSON (EST) format
 - [`docs/adrs/`](docs/adrs/) — architecture decision records
 - [`docs/user/`](docs/user/) — user documentation site (VitePress)
