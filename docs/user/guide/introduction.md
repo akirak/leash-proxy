@@ -15,16 +15,16 @@ controllable.
 ## Design decisions
 
 Architecture decisions are recorded as ADRs in
-[`docs/adrs/`](https://github.com/akirakomamura/leash-proxy/tree/main/docs/adrs)
+[`docs/adrs/`](https://github.com/akirak/leash-proxy/tree/main/docs/adrs)
 in the repository:
 
-- [ADR 0001](https://github.com/akirakomamura/leash-proxy/blob/main/docs/adrs/0001-rust-mitm-proxy-with-cedar-policies.md)
+- [ADR 0001](https://github.com/akirak/leash-proxy/blob/main/docs/adrs/0001-rust-mitm-proxy-with-cedar-policies.md)
   — Rust proxy with Cedar policies, fail-closed posture, structured audit
   logging, and credential hygiene.
-- [ADR 0002](https://github.com/akirakomamura/leash-proxy/blob/main/docs/adrs/0002-event-storage-for-monitoring-ui.md)
+- [ADR 0002](https://github.com/akirak/leash-proxy/blob/main/docs/adrs/0002-event-storage-for-monitoring-ui.md)
   — JSONL logs are the source of truth; downstream indexing feeds the
   monitoring UI.
-- [ADR 0003](https://github.com/akirakomamura/leash-proxy/blob/main/docs/adrs/0003-elixir-phoenix-downstream-collector-and-ui.md)
+- [ADR 0003](https://github.com/akirak/leash-proxy/blob/main/docs/adrs/0003-elixir-phoenix-downstream-collector-and-ui.md)
   — the Elixir/Phoenix collector and UI run as a separate downstream process.
 
 ## Next steps
