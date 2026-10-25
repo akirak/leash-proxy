@@ -40,7 +40,8 @@ impl Default for ServerConfig {
 pub struct PolicyFiles {
     /// Cedar schema file.
     pub schema: PathBuf,
-    /// Cedar policy files, evaluated as one policy set.
+    /// Cedar policy files, in Cedar text or Cedar JSON (EST) format,
+    /// evaluated as one policy set.
     pub policies: Vec<PathBuf>,
 }
 

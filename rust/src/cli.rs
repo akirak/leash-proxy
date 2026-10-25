@@ -20,7 +20,9 @@ pub struct Cli {
     #[arg(long)]
     pub schema: Option<PathBuf>,
 
-    /// Cedar policy file; repeat or pass multiple values for multiple files.
+    /// Cedar policy file, in Cedar text or Cedar JSON (EST) format;
+    /// repeat or pass multiple values for multiple files. A file whose
+    /// content starts with `{` is loaded as JSON.
     #[arg(long = "policies")]
     pub policies: Option<Vec<PathBuf>>,
 

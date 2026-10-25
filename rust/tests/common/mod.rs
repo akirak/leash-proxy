@@ -43,3 +43,57 @@ permit(principal, action == Action::"http_connect", resource == Host::"127.0.0.1
 // The internal admin console is always forbidden.
 forbid(principal, action, resource == Host::"admin.internal");
 "#;
+
+/// A Cedar policy set in the Cedar JSON (EST) format: the policy set that
+/// `examples/lean-policy-gen` generates from Lean 4 (`lake exe gen`). It is
+/// equivalent to the default Cedar text policy set in `rust/policies/`
+/// (`policies.cedar`). A dev-only test asserts that the checked-in generated
+/// file matches this fixture.
+#[allow(dead_code)] // only some test targets use the JSON fixtures
+pub const JSON_POLICIES: &str = r#"{
+  "staticPolicies": {
+    "github-readonly": {
+      "effect": "permit",
+      "principal": {"op": "All"},
+      "action": {"op": "==", "entity": {"type": "Action", "id": "http_get"}},
+      "resource": {"op": "==", "entity": {"type": "Host", "id": "api.github.com"}},
+      "conditions": []
+    },
+    "pypi-simple": {
+      "effect": "permit",
+      "principal": {"op": "==", "entity": {"type": "Agent", "id": "vm-build"}},
+      "action": {"op": "==", "entity": {"type": "Action", "id": "http_get"}},
+      "resource": {"op": "==", "entity": {"type": "Host", "id": "pypi.org"}},
+      "conditions": [
+        {
+          "kind": "when",
+          "body": {
+            "like": {
+              "left": {".": {"left": {"Var": "context"}, "attr": "path"}},
+              "pattern": [
+                {"Literal": "/"},
+                {"Literal": "s"},
+                {"Literal": "i"},
+                {"Literal": "m"},
+                {"Literal": "p"},
+                {"Literal": "l"},
+                {"Literal": "e"},
+                {"Literal": "/"},
+                "Wildcard"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "forbid-admin": {
+      "effect": "forbid",
+      "principal": {"op": "All"},
+      "action": {"op": "All"},
+      "resource": {"op": "==", "entity": {"type": "Host", "id": "admin.internal"}},
+      "conditions": []
+    }
+  },
+  "templates": {},
+  "templateLinks": []
+}"#;
