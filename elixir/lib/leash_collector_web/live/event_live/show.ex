@@ -37,7 +37,7 @@ defmodule LeashCollectorWeb.EventLive.Show do
           Request <code>{@event.request_id}</code> from agent <code>{@event.agent_id}</code>
         </:subtitle>
         <:actions>
-          <.button navigate={~p"/events"}>Back to events</.button>
+          <.button variant="outline" navigate={~p"/events"}>Back to events</.button>
         </:actions>
       </.header>
 
@@ -46,7 +46,7 @@ defmodule LeashCollectorWeb.EventLive.Show do
           <:item title="Timestamp">{format_ts(@event.ts)}</:item>
           <:item title="Decision">
             {@event.decision}
-            <span :if={@event.decision == "deny"} class="text-sm text-base-content/70">
+            <span :if={@event.decision == "deny"} class="text-sm text-muted-foreground">
               {@event.deny_reason}
             </span>
           </:item>
@@ -65,7 +65,7 @@ defmodule LeashCollectorWeb.EventLive.Show do
           <:item title="TLS">{@event.tls}</:item>
           <:item :if={@event.error != ""} title="Transport error">{@event.error}</:item>
           <:item title="Recorded headers (proxy allowlist, redacted)">
-            <pre class="mt-1 max-w-xl overflow-x-auto rounded bg-base-200 p-2 text-xs">{@event.headers}</pre>
+            <pre class="mt-1 max-w-xl overflow-x-auto rounded-md bg-muted p-2 text-xs">{@event.headers}</pre>
           </:item>
         </.list>
       </div>
@@ -77,19 +77,21 @@ defmodule LeashCollectorWeb.EventLive.Show do
 
   defp decision_badge(%{decision: "allow"} = assigns) do
     ~H"""
-    <span class="badge badge-success badge-sm">{@decision}</span>
+    <.badge variant="secondary" class="border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-50">
+      {@decision}
+    </.badge>
     """
   end
 
   defp decision_badge(%{decision: "deny"} = assigns) do
     ~H"""
-    <span class="badge badge-error badge-sm">{@decision}</span>
+    <.badge variant="destructive">{@decision}</.badge>
     """
   end
 
   defp decision_badge(assigns) do
     ~H"""
-    <span class="badge badge-ghost badge-sm">{@decision}</span>
+    <.badge variant="outline">{@decision}</.badge>
     """
   end
 

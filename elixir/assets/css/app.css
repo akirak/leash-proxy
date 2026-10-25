@@ -3,9 +3,13 @@
 
 @import "tailwindcss" source(none);
 @import "phoenix-colocated/leash_collector/colocated.css";
+@import "./salad_ui.css";
+@import "../vendor/tw-animate.css";
 @source "../css";
 @source "../js";
 @source "../../lib/leash_collector_web";
+@source "../../deps/salad_ui/lib";
+@source "../../deps/salad_ui/assets/salad_ui";
 /* Required for Tailwind to automatically pick up changes in colocated CSS files in dev */
 @source "../../_build/dev/phoenix-colocated/leash_collector/*/";
 
@@ -13,82 +17,115 @@
    The heroicons installation itself is managed by your mix.exs */
 @plugin "../vendor/heroicons";
 
-/* daisyUI Tailwind Plugin. */
-@plugin "daisyui/packages/bundle/daisyui" {
-  themes: false;
+@theme inline {
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-background: var(--background);
+  --color-border: var(--border);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-foreground: var(--foreground);
+  --color-input: var(--input);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-ring: var(--ring);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-sidebar: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
-/* daisyUI theme plugin.
-  We ship with two themes, a light one inspired on Phoenix colors and a dark one inspired
-  on Elixir colors. Build your own at: https://daisyui.com/theme-generator/ */
-@plugin "daisyui/packages/bundle/daisyui-theme" {
-  name: "dark";
-  default: false;
-  prefersdark: true;
-  color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
-  --color-base-200: oklch(25.26% 0.014 253.1);
-  --color-base-300: oklch(20.15% 0.012 254.09);
-  --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(37% 0.044 257.287);
-  --color-neutral-content: oklch(98% 0.003 247.858);
-  --color-info: oklch(58% 0.158 241.966);
-  --color-info-content: oklch(97% 0.013 236.62);
-  --color-success: oklch(60% 0.118 184.704);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
-  --border: 1.5px;
-  --depth: 1;
-  --noise: 0;
-}
+@layer base {
+  :root {
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.137 0.036 258.526);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.137 0.036 258.526);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.137 0.036 258.526);
+    --primary: oklch(0.208 0.04 265.727);
+    --primary-foreground: oklch(0.984 0.003 247.858);
+    --secondary: oklch(0.968 0.007 247.895);
+    --secondary-foreground: oklch(0.208 0.04 265.727);
+    --muted: oklch(0.968 0.007 247.895);
+    --muted-foreground: oklch(0.555 0.041 257.44);
+    --accent: oklch(0.968 0.007 247.895);
+    --accent-foreground: oklch(0.208 0.04 265.727);
+    --destructive: oklch(0.637 0.208 25.326);
+    --destructive-foreground: oklch(0.984 0.003 247.858);
+    --border: oklch(0.929 0.013 255.532);
+    --input: oklch(0.929 0.013 255.532);
+    --ring: oklch(0.137 0.036 258.526);
+    --radius: 0.625rem;
+    --chart-1: oklch(0.677 0.157 35.19);
+    --chart-2: oklch(0.631 0.101 183.491);
+    --chart-3: oklch(0.379 0.044 225.539);
+    --chart-4: oklch(0.834 0.119 88.146);
+    --chart-5: oklch(0.783 0.126 58.749);
+    --sidebar-background: oklch(0.985 0 0);
+    --sidebar-foreground: oklch(0.37 0.012 285.801);
+    --sidebar-primary: oklch(0.21 0.006 285.884);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.968 0.001 286.375);
+    --sidebar-accent-foreground: oklch(0.21 0.006 285.884);
+    --sidebar-border: oklch(0.928 0.006 264.531);
+    --sidebar-ring: oklch(0.623 0.188 259.796);
+  }
 
-@plugin "daisyui/packages/bundle/daisyui-theme" {
-  name: "light";
-  default: true;
-  prefersdark: false;
-  color-scheme: "light";
-  --color-base-100: oklch(98% 0 0);
-  --color-base-200: oklch(96% 0.001 286.375);
-  --color-base-300: oklch(92% 0.004 286.32);
-  --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(70% 0.213 47.604);
-  --color-primary-content: oklch(98% 0.016 73.684);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(0% 0 0);
-  --color-accent-content: oklch(100% 0 0);
-  --color-neutral: oklch(44% 0.017 285.786);
-  --color-neutral-content: oklch(98% 0 0);
-  --color-info: oklch(62% 0.214 259.815);
-  --color-info-content: oklch(97% 0.014 254.604);
-  --color-success: oklch(70% 0.14 182.503);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
-  --border: 1.5px;
-  --depth: 1;
-  --noise: 0;
+  .dark {
+    --background: oklch(0.137 0.036 258.526);
+    --foreground: oklch(0.984 0.003 247.858);
+    --card: oklch(0.137 0.036 258.526);
+    --card-foreground: oklch(0.984 0.003 247.858);
+    --popover: oklch(0.137 0.036 258.526);
+    --popover-foreground: oklch(0.984 0.003 247.858);
+    --primary: oklch(0.984 0.003 247.858);
+    --primary-foreground: oklch(0.208 0.04 265.727);
+    --secondary: oklch(0.28 0.037 259.974);
+    --secondary-foreground: oklch(0.984 0.003 247.858);
+    --muted: oklch(0.28 0.037 259.974);
+    --muted-foreground: oklch(0.711 0.035 256.788);
+    --accent: oklch(0.28 0.037 259.974);
+    --accent-foreground: oklch(0.984 0.003 247.858);
+    --destructive: oklch(0.396 0.133 25.721);
+    --destructive-foreground: oklch(0.984 0.003 247.858);
+    --border: oklch(0.28 0.037 259.974);
+    --input: oklch(0.28 0.037 259.974);
+    --ring: oklch(0.872 0.009 258.338);
+    --chart-1: oklch(0.529 0.193 262.129);
+    --chart-2: oklch(0.698 0.134 165.463);
+    --chart-3: oklch(0.723 0.15 60.631);
+    --chart-4: oklch(0.619 0.204 312.728);
+    --chart-5: oklch(0.612 0.209 6.386);
+    --sidebar-background: oklch(0.21 0.006 285.884);
+    --sidebar-foreground: oklch(0.968 0.001 286.375);
+    --sidebar-primary: oklch(0.488 0.217 264.388);
+    --sidebar-primary-foreground: oklch(1 0 0);
+    --sidebar-accent: oklch(0.274 0.005 286.033);
+    --sidebar-accent-foreground: oklch(0.968 0.001 286.375);
+    --sidebar-border: oklch(0.274 0.005 286.033);
+    --sidebar-ring: oklch(0.623 0.188 259.796);
+  }
+
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: var(--border);
+  }
 }
 
 /* Add variants based on LiveView classes */
@@ -96,8 +133,8 @@
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
 @custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
 
-/* Use the data attribute for dark mode  */
-@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+/* Use the .dark class for dark mode */
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }

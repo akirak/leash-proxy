@@ -23,13 +23,28 @@ import "phoenix_html"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/leash_collector"
+import SaladUI from "salad_ui"
+import "salad_ui/components/dialog"
+import "salad_ui/components/select"
+import "salad_ui/components/tabs"
+import "salad_ui/components/radio_group"
+import "salad_ui/components/popover"
+import "salad_ui/components/hover-card"
+import "salad_ui/components/collapsible"
+import "salad_ui/components/tooltip"
+import "salad_ui/components/accordion"
+import "salad_ui/components/slider"
+import "salad_ui/components/switch"
+import "salad_ui/components/dropdown_menu"
+import "salad_ui/components/toast"
+import "salad_ui/components/toast-flash"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, SaladUI: SaladUI.SaladUIHook},
 })
 
 // Show progress bar on live navigation and form submits

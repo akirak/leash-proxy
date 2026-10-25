@@ -5,7 +5,6 @@ defmodule LeashCollectorWeb.EventLive.Index do
 
   @per_page 50
   @defaults %{"decision" => "", "agent_id" => "", "host" => "", "path" => "", "since" => "1h"}
-  @input_class "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-100"
 
   def mount(_params, _session, socket) do
     if connected?(socket), do: Audit.subscribe()
@@ -101,146 +100,175 @@ defmodule LeashCollectorWeb.EventLive.Index do
   defp page(_), do: 1
 
   def render(assigns) do
-    assigns = assign(assigns, :input_class, @input_class)
-
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 class="text-2xl font-semibold tracking-tight text-slate-950">Audit events</h1>
-          <p class="mt-2 text-sm text-slate-500">
-            Browse the rebuildable index of the proxy's durable JSONL audit trail.
-          </p>
-        </div>
-        <button
-          id="toggle-live"
-          phx-click="toggle-live"
-          class="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium transition hover:bg-slate-50"
-        >
-          <span class={[
-            "size-2 rounded-full",
-            if(@live_updates, do: "bg-teal-500", else: "bg-amber-500")
-          ]}></span>
-          {if @live_updates, do: "Live", else: "Paused"}
-          <span :if={@pending > 0}>+{@pending} new</span>
-        </button>
-      </div>
-      <.form
-        for={@form}
-        id="event-filters"
-        phx-change="filter"
-        phx-submit="filter"
-        class="mt-6 grid items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-6"
+      <.header>
+        Audit events
+        <:subtitle>
+          Browse the rebuildable index of the proxy's durable JSONL audit trail.
+        </:subtitle>
+        <:actions>
+          <.button
+            id="toggle-live"
+            type="button"
+            variant="outline"
+            phx-click="toggle-live"
+            class="gap-2"
+          >
+            <span class={[
+              "size-2 rounded-full",
+              if(@live_updates, do: "bg-teal-500", else: "bg-amber-500")
+            ]}></span>
+            {if @live_updates, do: "Live", else: "Paused"}
+            <span :if={@pending > 0}>+{@pending} new</span>
+          </.button>
+        </:actions>
+      </.header>
+
+      <.card class="mt-6">
+        <.card_content class="pt-6">
+          <.form
+            for={@form}
+            id="event-filters"
+            phx-change="filter"
+            phx-submit="filter"
+            class="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-6"
+          >
+            <.input
+              field={@form[:decision]}
+              type="select"
+              label="Decision"
+              options={[{"Any", ""}, {"Allow", "allow"}, {"Deny", "deny"}]}
+            />
+            <.input
+              field={@form[:agent_id]}
+              label="Agent"
+              placeholder="Agent ID"
+              phx-debounce="300"
+            />
+            <.input
+              field={@form[:host]}
+              label="Host"
+              placeholder="github.com"
+              phx-debounce="300"
+            />
+            <.input
+              field={@form[:path]}
+              label="Path"
+              placeholder="/api"
+              phx-debounce="300"
+            />
+            <.input
+              field={@form[:since]}
+              type="select"
+              label="Window"
+              options={Enum.map(Audit.windows(), &{"Last #{&1}", &1}) ++ [{"All time", "all"}]}
+            />
+            <.button
+              id="reset-filters"
+              type="button"
+              variant="ghost"
+              phx-click="reset"
+              class="h-10"
+            >
+              Reset filters
+            </.button>
+          </.form>
+        </.card_content>
+      </.card>
+
+      <div
+        class="my-5 flex flex-wrap items-center gap-3 text-sm text-muted-foreground"
+        aria-live="polite"
       >
-        <.input
-          field={@form[:decision]}
-          type="select"
-          label="Decision"
-          options={[{"Any", ""}, {"Allow", "allow"}, {"Deny", "deny"}]}
-          class={@input_class}
-        />
-        <.input
-          field={@form[:agent_id]}
-          label="Agent"
-          placeholder="Agent ID"
-          phx-debounce="300"
-          class={@input_class}
-        />
-        <.input
-          field={@form[:host]}
-          label="Host"
-          placeholder="github.com"
-          phx-debounce="300"
-          class={@input_class}
-        />
-        <.input
-          field={@form[:path]}
-          label="Path"
-          placeholder="/api"
-          phx-debounce="300"
-          class={@input_class}
-        />
-        <.input
-          field={@form[:since]}
-          type="select"
-          label="Window"
-          options={Enum.map(Audit.windows(), &{"Last #{&1}", &1}) ++ [{"All time", "all"}]}
-          class={@input_class}
-        />
-        <button
-          id="reset-filters"
-          type="button"
-          phx-click="reset"
-          class="mb-2 rounded-lg px-4 py-2 text-sm text-slate-600 transition hover:bg-slate-200"
-        >Reset filters</button>
-      </.form>
-      <div class="my-5 flex flex-wrap gap-5 text-sm text-slate-500" aria-live="polite">
         <span id="matching-count">{@total} matching events</span>
-        <span class="text-teal-700">{@stats.allow} allowed in window</span>
-        <span class="text-rose-700">{@stats.deny} denied in window</span>
+        <.badge variant="outline" class="border-teal-200 bg-teal-50 text-teal-700">
+          {@stats.allow} allowed in window
+        </.badge>
+        <.badge variant="outline" class="border-rose-200 bg-rose-50 text-rose-700">
+          {@stats.deny} denied in window
+        </.badge>
       </div>
-      <div class="overflow-x-auto rounded-xl border border-slate-200">
-        <table class="w-full text-left text-sm">
-          <thead class="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-            <tr>
-              <th class="p-3">Timestamp (UTC)</th><th class="p-3">Decision</th><th class="p-3">
-                Agent
-              </th><th class="p-3">Request</th><th class="p-3">Status</th><th class="p-3">Latency</th>
-            </tr>
-          </thead>
-          <tbody id="events" phx-update="stream" class="divide-y divide-slate-100">
-            <tr id="events-empty" class="hidden only:table-row">
-              <td colspan="6" class="p-10 text-center text-slate-500">
+
+      <.card class="overflow-x-auto">
+        <.table>
+          <.table_header class="bg-muted/50">
+            <.table_row>
+              <.table_head>Timestamp (UTC)</.table_head>
+              <.table_head>Decision</.table_head>
+              <.table_head>Agent</.table_head>
+              <.table_head>Request</.table_head>
+              <.table_head>Status</.table_head>
+              <.table_head>Latency</.table_head>
+            </.table_row>
+          </.table_header>
+          <.table_body id="events" phx-update="stream">
+            <.table_row id="events-empty" class="hidden only:table-row">
+              <td colspan="6" class="p-10 text-center text-muted-foreground">
                 No matching events. Check your filters or wait for the proxy to write an audit record.
               </td>
-            </tr>
-            <tr :for={{id, event} <- @streams.events} id={id} class="transition hover:bg-slate-50">
-              <td class="whitespace-nowrap p-3 font-mono text-xs">
+            </.table_row>
+            <.table_row :for={{id, event} <- @streams.events} id={id}>
+              <.table_cell class="whitespace-nowrap font-mono text-xs">
                 <.link
                   navigate={~p"/events/#{event.request_id}"}
                   class="text-teal-700 hover:underline"
                 >{Calendar.strftime(event.ts, "%Y-%m-%d %H:%M:%S")}</.link>
-              </td>
-              <td class="p-3">
-                <span class={[
-                  "rounded-full px-2 py-1 text-xs font-medium",
-                  if(event.decision == "deny",
-                    do: "bg-rose-50 text-rose-700",
-                    else: "bg-teal-50 text-teal-700"
-                  )
-                ]}>{event.decision}</span>
-              </td>
-              <td class="p-3 font-mono text-xs">{event.agent_id}</td>
-              <td class="max-w-md p-3">
+              </.table_cell>
+              <.table_cell>
+                <.badge
+                  variant={if(event.decision == "deny", do: "destructive", else: "secondary")}
+                  class={
+                    if(event.decision == "deny",
+                      do: "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-50",
+                      else: "border-teal-200 bg-teal-50 text-teal-700 hover:bg-teal-50"
+                    )
+                  }
+                >
+                  {event.decision}
+                </.badge>
+              </.table_cell>
+              <.table_cell class="font-mono text-xs">{event.agent_id}</.table_cell>
+              <.table_cell class="max-w-md">
                 <.link
                   navigate={~p"/events/#{event.request_id}"}
                   class="block truncate hover:text-teal-700"
                   title={event.path}
                 ><span class="font-medium">{event.method}</span> {event.host}{event.path}</.link>
-              </td>
-              <td class="p-3">{event.status}</td><td class="whitespace-nowrap p-3">
+              </.table_cell>
+              <.table_cell>{event.status}</.table_cell>
+              <.table_cell class="whitespace-nowrap">
                 {Float.round(event.latency_ms, 1)} ms
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+              </.table_cell>
+            </.table_row>
+          </.table_body>
+        </.table>
+      </.card>
+
       <nav aria-label="Pagination" class="mt-5 flex items-center justify-between text-sm">
-        <button
+        <.button
           id="newer-page"
+          type="button"
+          variant="outline"
+          size="sm"
           phx-click="page"
           phx-value-page={@page - 1}
           disabled={@page <= 1}
-          class="rounded-lg px-4 py-2 transition hover:bg-slate-100 disabled:opacity-40"
-        >← Newer</button>
-        <span id="page-number" class="text-slate-500">Page {@page} of {@total_pages}</span>
-        <button
+        >
+          ← Newer
+        </.button>
+        <span id="page-number" class="text-muted-foreground">Page {@page} of {@total_pages}</span>
+        <.button
           id="older-page"
+          type="button"
+          variant="outline"
+          size="sm"
           phx-click="page"
           phx-value-page={@page + 1}
           disabled={@page >= @total_pages}
-          class="rounded-lg px-4 py-2 transition hover:bg-slate-100 disabled:opacity-40"
-        >Older →</button>
+        >
+          Older →
+        </.button>
       </nav>
     </Layouts.app>
     """

@@ -84,6 +84,43 @@ defmodule LeashCollectorWeb do
 
       # HTML escaping functionality
       import Phoenix.HTML
+      # SaladUI components
+      import SaladUI.Accordion
+      import SaladUI.Alert
+      import SaladUI.AlertDialog
+      import SaladUI.Avatar
+      import SaladUI.Badge
+      import SaladUI.Breadcrumb
+      import SaladUI.Card
+      import SaladUI.Chart
+      import SaladUI.Checkbox
+      import SaladUI.Collapsible
+      import SaladUI.Dialog
+      import SaladUI.DropdownMenu
+      import SaladUI.Form
+      import SaladUI.Helpers
+      import SaladUI.HoverCard
+      import SaladUI.Label
+      import SaladUI.Menu
+      import SaladUI.Pagination
+      import SaladUI.Popover
+      import SaladUI.Progress
+      import SaladUI.RadioGroup
+      import SaladUI.ScrollArea
+      import SaladUI.Select
+      import SaladUI.Separator
+      import SaladUI.Sheet
+      import SaladUI.Sidebar
+      import SaladUI.Skeleton
+      import SaladUI.Slider
+      import SaladUI.Switch
+      import SaladUI.Table
+      import SaladUI.Tabs
+      import SaladUI.Textarea
+      import SaladUI.Toast
+      import SaladUI.Toggle
+      import SaladUI.ToggleGroup
+      import SaladUI.Tooltip
       # Core UI components
       import LeashCollectorWeb.CoreComponents
 

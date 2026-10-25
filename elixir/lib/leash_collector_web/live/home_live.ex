@@ -44,7 +44,7 @@ defmodule LeashCollectorWeb.HomeLive do
         </:subtitle>
         <:actions>
           <.button navigate={~p"/events"}>
-            Browse events <.icon name="hero-arrow-right" />
+            Browse events <.icon name="hero-arrow-right" class="ml-1.5 size-4" />
           </.button>
         </:actions>
       </.header>
@@ -55,39 +55,39 @@ defmodule LeashCollectorWeb.HomeLive do
         <.stat_card id="overview-deny" title="Denied (24h)" value={@stats.deny} tone="bad" />
       </div>
 
-      <div class="mt-10">
-        <h2 class="pb-2 font-semibold">Top denied hosts (24h)</h2>
-
-        <%= if @hosts_empty? do %>
-          <p class="text-sm text-base-content/70">
-            No denied requests indexed yet. Point the collector at the proxy
-            audit log and denied requests will show up here.
-          </p>
-        <% else %>
-          <table class="w-full overflow-hidden rounded-xl border border-slate-200 text-left text-sm">
-            <thead class="bg-slate-50 text-slate-500">
-              <tr>
-                <th class="p-3">Host</th><th class="p-3">Denied requests</th>
-              </tr>
-            </thead>
-            <tbody id="top-denied-hosts" phx-update="stream" class="divide-y divide-slate-100">
-              <tr
-                :for={{id, row} <- @streams.denied_hosts}
-                id={id}
-                class="transition hover:bg-slate-50"
-              >
-                <td class="p-3">
-                  <.link
-                    navigate={~p"/events?#{%{decision: "deny", host: row.host, since: "24h"}}"}
-                    class="text-teal-700 hover:underline"
-                  >{row.host}</.link>
-                </td>
-                <td class="p-3 font-mono">{row.count}</td>
-              </tr>
-            </tbody>
-          </table>
-        <% end %>
-      </div>
+      <.card class="mt-10">
+        <.card_header>
+          <.card_title class="text-base">Top denied hosts (24h)</.card_title>
+        </.card_header>
+        <.card_content>
+          <%= if @hosts_empty? do %>
+            <p class="text-sm text-muted-foreground">
+              No denied requests indexed yet. Point the collector at the proxy
+              audit log and denied requests will show up here.
+            </p>
+          <% else %>
+            <.table>
+              <.table_header>
+                <.table_row>
+                  <.table_head>Host</.table_head>
+                  <.table_head>Denied requests</.table_head>
+                </.table_row>
+              </.table_header>
+              <.table_body id="top-denied-hosts" phx-update="stream">
+                <.table_row :for={{id, row} <- @streams.denied_hosts} id={id}>
+                  <.table_cell>
+                    <.link
+                      navigate={~p"/events?#{%{decision: "deny", host: row.host, since: "24h"}}"}
+                      class="text-teal-700 hover:underline"
+                    >{row.host}</.link>
+                  </.table_cell>
+                  <.table_cell class="font-mono">{row.count}</.table_cell>
+                </.table_row>
+              </.table_body>
+            </.table>
+          <% end %>
+        </.card_content>
+      </.card>
     </Layouts.app>
     """
   end
@@ -102,18 +102,20 @@ defmodule LeashCollectorWeb.HomeLive do
       assign(
         assigns,
         :tone_class,
-        %{nil => "text-slate-950", "ok" => "text-teal-700", "bad" => "text-rose-700"}[
+        %{nil => "text-foreground", "ok" => "text-teal-700", "bad" => "text-rose-700"}[
           assigns.tone
         ]
       )
 
     ~H"""
-    <div id={@id} class="rounded-xl border border-slate-200 bg-slate-50 p-6">
-      <div class="space-y-3">
-        <div class="text-xs uppercase tracking-wider text-slate-500">{@title}</div>
+    <.card id={@id}>
+      <.card_header class="pb-2">
+        <.card_description class="text-xs uppercase tracking-wider">{@title}</.card_description>
+      </.card_header>
+      <.card_content>
         <div class={"text-3xl font-bold " <> @tone_class}>{@value}</div>
-      </div>
-    </div>
+      </.card_content>
+    </.card>
     """
   end
 end

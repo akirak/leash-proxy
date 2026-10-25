@@ -35,31 +35,32 @@ defmodule LeashCollectorWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="border-b border-slate-200 bg-white px-4 sm:px-8">
+    <header class="border-b border-border bg-background px-4 sm:px-8">
       <nav
         aria-label="Main navigation"
-        class="mx-auto flex max-w-7xl items-center justify-between py-5"
+        class="mx-auto flex max-w-7xl items-center justify-between py-4"
       >
         <.link
           navigate={~p"/"}
-          class="flex items-center gap-3 font-semibold tracking-tight text-slate-950"
+          class="flex items-center gap-3 font-semibold tracking-tight text-foreground"
         >
-          <span class="flex size-9 items-center justify-center rounded-xl bg-teal-700 text-white"><.icon
-            name="hero-shield-check"
-            class="size-5"
-          /></span>
+          <span class="flex size-9 items-center justify-center rounded-xl bg-teal-700 text-white">
+            <.icon name="hero-shield-check" class="size-5" />
+          </span>
           Leash
-          <span class="hidden text-sm font-normal text-slate-400 sm:inline">/ Audit console</span>
+          <span class="hidden text-sm font-normal text-muted-foreground sm:inline">
+            / Audit console
+          </span>
         </.link>
-        <div class="flex gap-2 text-sm text-slate-600">
-          <.link navigate={~p"/"} class="rounded-lg px-3 py-2 transition hover:bg-slate-100">Overview</.link>
-          <.link navigate={~p"/events"} class="rounded-lg px-3 py-2 transition hover:bg-slate-100">Events</.link>
+        <div class="flex gap-1 text-sm">
+          <.button variant="ghost" size="sm" navigate={~p"/"}>Overview</.button>
+          <.button variant="ghost" size="sm" navigate={~p"/events"}>Events</.button>
         </div>
       </nav>
     </header>
 
-    <main class="min-h-screen bg-white px-4 py-10 text-slate-800 sm:px-8">
-      <div class="mx-auto max-w-7xl space-y-4">
+    <main class="min-h-screen bg-background px-4 py-10 text-foreground sm:px-8">
+      <div class="mx-auto max-w-7xl space-y-6">
         {render_slot(@inner_block)}
       </div>
     </main>
@@ -124,11 +125,12 @@ defmodule LeashCollectorWeb.Layouts do
   """
   def theme_toggle(assigns) do
     ~H"""
-    <div class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full">
-      <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 brightness-200 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 [[data-theme-source=system]_&]:!left-0 transition-[left]" />
+    <div class="relative flex flex-row items-center rounded-full border-2 border-border bg-muted">
+      <div class="absolute left-0 h-full w-1/3 rounded-full border border-border bg-background transition-[left] [.dark_&]:left-2/3" />
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        type="button"
+        class="flex w-1/3 cursor-pointer p-2"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
       >
@@ -136,7 +138,8 @@ defmodule LeashCollectorWeb.Layouts do
       </button>
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        type="button"
+        class="flex w-1/3 cursor-pointer p-2"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
       >
@@ -144,7 +147,8 @@ defmodule LeashCollectorWeb.Layouts do
       </button>
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        type="button"
+        class="flex w-1/3 cursor-pointer p-2"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
       >

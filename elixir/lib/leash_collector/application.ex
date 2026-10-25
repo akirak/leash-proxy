@@ -10,6 +10,7 @@ defmodule LeashCollector.Application do
     children =
       [
         LeashCollectorWeb.Telemetry,
+        TwMerge.Cache,
         LeashCollector.Repo,
         {Ecto.Migrator,
          repos: Application.fetch_env!(:leash_collector, :ecto_repos), skip: skip_migrations?()},
