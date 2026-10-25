@@ -36,3 +36,8 @@ $ npm run build --prefix docs/user     # static build into docs/user/.vitepress/
   that generates a Cedar policy set in the JSON (EST) format
 - [`docs/adrs/`](docs/adrs/) — architecture decision records
 - [`docs/user/`](docs/user/) — user documentation site (VitePress)
+
+## Inspirations
+
+- [mitmproxy](https://github.com/mitmproxy)
+- [strongdm/leash](https://github.com/strongdm/leash)
