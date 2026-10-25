@@ -30,6 +30,11 @@
       rustVersion = "latest";
       # Profile (default or minimal)
       rustProfile = "default";
+
+      # Set the Erlang version
+      beamVersion = "beam28Packages";
+      # Set the Elixir version
+      elixirVersion = "elixir_1_20";
     in
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = nixpkgs.lib.systems.flakeExposed;
@@ -52,7 +57,20 @@
           _module.args = {
             pkgs = import nixpkgs {
               inherit system;
-              overlays = [ inputs.rust-overlay.overlays.default ];
+              overlays = [
+                inputs.rust-overlay.overlays.default
+                (
+                  final: _:
+                  let
+                    beamPackages = final.${beamVersion};
+                  in
+                  {
+                    inherit beamPackages;
+                    inherit (beamPackages) erlang hex;
+                    elixir = beamPackages.${elixirVersion};
+                  }
+                )
+              ];
             };
             craneLib = (inputs.crane.mkLib pkgs).overrideToolchain (
               pkgs: pkgs.rust-bin.${rustChannel}.${rustVersion}.${rustProfile}
@@ -101,7 +119,19 @@
             packages = [
               pkgs.rust-analyzer-unwrapped
               pkgs.lean4
-            ];
+              pkgs.erlang
+              pkgs.elixir
+              pkgs.nodejs
+              pkgs.beamPackages.expert
+            ]
+            ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.inotify-tools
+            ++ (lib.optionals pkgs.stdenv.hostPlatform.isDarwin (
+              with pkgs.darwin.apple_sdk.frameworks;
+              [
+                CoreFoundation
+                CoreServices
+              ]
+            ));
 
             RUST_SRC_PATH = "${
               pkgs.rust-bin.${rustChannel}.${rustVersion}.rust-src
