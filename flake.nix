@@ -82,6 +82,13 @@
             commonArgs
             // {
               cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+              # Ship the default Cedar schema/policy set alongside the binary;
+              # the proxy resolves `policies/` relative paths at runtime.
+              postInstall = ''
+                mkdir -p $out/share/leash-proxy
+                cp -r ${./rust/policies} $out/share/leash-proxy/policies
+                chmod -R u+w $out/share/leash-proxy
+              '';
             }
           );
 
