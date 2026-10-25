@@ -1,6 +1,6 @@
 defmodule LeashCollector.AuditTest do
   @moduledoc false
-  use LeashCollector.DataCase, async: true
+  use LeashCollector.DataCase, async: false
 
   alias LeashCollector.Audit
   alias LeashCollector.Repo
@@ -91,14 +91,21 @@ defmodule LeashCollector.AuditTest do
     assert %{total: 1} = Audit.list_events(path: "/x", since: "all")
     # Substring % in filter input must not act as a wildcard.
     assert %{total: 0} = Audit.list_events(host: "%", since: "all")
+    assert %{total: 0} = Audit.list_events(host: "_", since: "all")
+    insert!(%{host: "literal%_host", path: "/back\\slash"})
+    assert %{total: 1} = Audit.list_events(host: "%_", since: "all")
+    assert %{total: 1} = Audit.list_events(path: "\\", since: "all")
   end
 
   test "list_events/1 filters by time window" do
     insert!(%{ts: DateTime.utc_now() |> DateTime.add(-30, :minute) |> DateTime.truncate(:second)})
     insert!(%{ts: ~U[2020-01-01 00:00:00Z]})
 
-    assert %{total: 1} = Audit.list_events(since: "1h")
-    assert %{total: 2} = Audit.list_events(since: "all")
+    insert!(%{ts: DateTime.utc_now() |> DateTime.add(-5, :minute) |> DateTime.truncate(:second)})
+    assert %{total: 1} = Audit.list_events(since: "15m")
+    assert Audit.stats(since: "15m").total == 1
+    assert %{total: 2} = Audit.list_events(since: "1h")
+    assert %{total: 3} = Audit.list_events(since: "all")
   end
 
   test "get_event/1 fetches by request id" do

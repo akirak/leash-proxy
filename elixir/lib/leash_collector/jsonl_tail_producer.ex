@@ -1,296 +1,255 @@
 defmodule LeashCollector.JsonlTailProducer do
   @moduledoc """
-  A Broadway producer that tails the leash-proxy append-only JSONL audit log
-  (ADR 0003: event transport for a same-host deployment).
+  Demand-driven Broadway producer for the proxy's append-only JSONL log.
 
-  One `Broadway.Message` is emitted per audit event line. The byte offset and
-  inode of the tailed file are persisted to a cursor file so ingestion
-  resumes where it left off after restarts; when the cursor no longer
-  matches the file (rotation, truncation), the file is replayed from byte 0.
-  The JSONL log remains the source of truth (ADR 0002).
-
-  * Non-audit log lines (different `target`) are skipped without indexing.
-  * Only complete newline-terminated lines are consumed, so a partially
-    flushed trailing line is picked up on the next poll.
-  * Backpressure: at most one bounded chunk is read per poll and never more
-    than the outstanding GenStage demand is emitted, so the proxy's hot path
-    (appending JSONL) is never blocked.
-  * Idempotency downstream (`on_conflict: :nothing` on `request_id`) makes
-    at-least-once re-emission after a crash safe.
-
-  When events are eventually exported over the network, this module can be
-  swapped for a broker-backed Broadway producer (e.g. Broadway Kafka, SQS,
-  or Redis) without any other pipeline changes.
+  Only one bounded chunk is in flight at a time. Its cursor is atomically
+  checkpointed only after every emitted message is acknowledged. Failed
+  chunks are replayed; SQLite's unique request IDs make replays idempotent.
+  Incomplete lines are left for the next poll. Keep rotated logs until drained;
+  rotation or detected truncation starts the current file at byte zero.
   """
-
   use GenStage
-
   @behaviour Broadway.Producer
+  @behaviour Broadway.Acknowledger
 
   require Logger
-
   alias Broadway.Message
-  alias Broadway.NoopAcknowledger
   alias LeashCollector.Audit.Record
 
-  @default_opts [
-    poll_interval: 500,
-    max_bytes: 512_000
-  ]
+  def start_link(opts), do: GenStage.start_link(__MODULE__, opts)
 
-  @doc """
-  Starts the producer standalone (outside a Broadway topology).
-
-  Used only for tests and manual experimentation; Broadway starts it via
-  `init/1` with the same options.
-  """
-  def start_link(opts) do
-    GenStage.start_link(__MODULE__, Keyword.merge(@default_opts, opts))
-  end
-
-  @impl true
+  @impl GenStage
   def init(opts) do
     path = Keyword.fetch!(opts, :path)
-    cursor_path = Keyword.get(opts, :cursor_path) || default_cursor_path(path)
-    poll_interval = Keyword.get(opts, :poll_interval, 500)
-    max_bytes = Keyword.get(opts, :max_bytes, 512_000)
 
     state = %{
       path: path,
-      cursor_path: cursor_path,
-      poll_interval: poll_interval,
-      max_bytes: max_bytes,
+      cursor_path:
+        Keyword.get(opts, :cursor_path) ||
+          Path.join(Path.dirname(path), ".#{Path.basename(path)}.cursor"),
+      poll_interval: Keyword.get(opts, :poll_interval, 500),
+      max_bytes: Keyword.get(opts, :max_bytes, 512_000),
+      read_bytes: Keyword.get(opts, :max_bytes, 512_000),
+      max_line_bytes: Keyword.get(opts, :max_line_bytes, 16_777_216),
+      discarding: false,
       demand: 0,
       offset: 0,
-      inode: nil
+      inode: nil,
+      pending: nil,
+      timer: nil,
+      draining: false
     }
 
-    state = resume(state)
-    Process.send_after(self(), :poll, 0)
-
-    {:producer, state}
+    {:producer, schedule(resume(state), 0)}
   end
 
   @impl GenStage
-  def handle_demand(demand, state) when demand > 0 do
-    # Poll eagerly on new demand for lower ingest latency when idle.
-    send(self(), :poll)
-    {:noreply, [], %{state | demand: state.demand + demand}}
+  def handle_demand(demand, state) do
+    {:noreply, [], schedule(%{state | demand: state.demand + demand}, 0)}
   end
-
-  def handle_demand(_demand, state), do: {:noreply, [], state}
 
   @impl GenStage
   def handle_info(:poll, state) do
-    {events, offset, inode, backlog?} = read_chunk(state)
+    state = %{state | timer: nil}
 
-    state =
-      %{state | demand: max(state.demand - length(events), 0), offset: offset, inode: inode}
-      |> flush_cursor()
-
-    delay = if backlog? and state.demand > 0, do: 10, else: state.poll_interval
-    Process.send_after(self(), :poll, delay)
-
-    {:noreply, events, state}
+    if state.draining or state.demand <= 0 or state.pending != nil do
+      {:noreply, [], state}
+    else
+      {events, state} = poll(state)
+      {:noreply, events, schedule(state, state.poll_interval)}
+    end
   end
 
-  def handle_info(_other, state), do: {:noreply, [], state}
+  def handle_info(
+        {:ack, token, successful, failed},
+        %{pending: %{token: token} = pending} = state
+      ) do
+    pending = %{
+      pending
+      | remaining: pending.remaining - successful - failed,
+        failed: pending.failed or failed > 0
+    }
 
-  @impl GenStage
-  def terminate(_reason, state), do: flush_cursor(state)
+    state = %{state | pending: pending}
+
+    state =
+      if pending.remaining == 0 do
+        state = %{state | pending: nil}
+
+        if pending.failed do
+          # Leave the durable cursor unchanged and re-read the entire chunk.
+          state
+        else
+          checkpoint(%{state | offset: pending.offset, inode: pending.inode})
+        end
+      else
+        state
+      end
+
+    {:noreply, [], schedule(state, state.poll_interval)}
+  end
+
+  def handle_info(_message, state), do: {:noreply, [], state}
 
   @impl Broadway.Producer
-  def prepare_for_draining(_state), do: :ok
+  def prepare_for_draining(state), do: {:noreply, [], %{state | draining: true}}
 
-  ## Polling
+  @impl Broadway.Acknowledger
+  def ack({producer, token}, successful, failed) do
+    send(producer, {:ack, token, length(successful), length(failed)})
+    :ok
+  end
 
-  defp read_chunk(state) when state.demand <= 0, do: {[], state.offset, state.inode, false}
+  defp schedule(%{timer: nil, draining: false} = state, delay) do
+    %{state | timer: Process.send_after(self(), :poll, delay)}
+  end
 
-  defp read_chunk(state) do
-    case File.stat(state.path) do
-      {:ok, stat} ->
-        offset = start_offset(state, stat)
+  defp schedule(state, _delay), do: state
 
-        {events, consumed, backlog?} =
-          scan(state.path, offset, state.demand, state.max_bytes)
+  defp poll(state) do
+    with {:ok, device} <- :file.open(state.path, [:read, :binary, :raw]) do
+      try do
+        with {:ok, info} <- :file.read_file_info(device) do
+          stat = File.Stat.from_record(info)
+          same_file = stat.inode == state.inode and stat.size >= state.offset
+          offset = if same_file, do: state.offset, else: 0
 
-        {events, offset + consumed, stat.inode, backlog?}
+          state =
+            if same_file,
+              do: state,
+              else: %{state | discarding: false, read_bytes: state.max_bytes}
 
-      {:error, reason} ->
-        # The log file does not exist yet (e.g. the proxy has not started).
-        debug("cannot stat #{state.path}: #{inspect(reason)}")
-        {[], state.offset, state.inode, false}
+          case :file.pread(device, offset, state.read_bytes) do
+            {:ok, data} ->
+              {records, consumed, state} = scan_window(data, state)
+              end_offset = offset + consumed
+              token = make_ref()
+
+              events =
+                Enum.map(records, fn {json, relative_offset} ->
+                  %Message{
+                    data: json,
+                    acknowledger: {__MODULE__, {self(), token}, nil},
+                    metadata: %{offset: offset + relative_offset}
+                  }
+                end)
+
+              if events == [] do
+                next = %{state | offset: end_offset, inode: stat.inode}
+                {[], if(consumed > 0, do: checkpoint(next), else: next)}
+              else
+                pending = %{
+                  token: token,
+                  remaining: length(events),
+                  failed: false,
+                  offset: end_offset,
+                  inode: stat.inode
+                }
+
+                {events, %{state | demand: state.demand - length(events), pending: pending}}
+              end
+
+            _ ->
+              {[], state}
+          end
+        else
+          _ -> {[], state}
+        end
+      after
+        :file.close(device)
+      end
+    else
+      _ -> {[], state}
+    end
+  end
+
+  # Grow the read window for a line spanning chunks, but never retain an
+  # unbounded line. Oversized lines are discarded through their next newline.
+  defp scan_window(data, %{discarding: true} = state) do
+    case :binary.match(data, "\n") do
+      :nomatch -> {[], byte_size(data), state}
+      {at, 1} -> {[], at + 1, %{state | discarding: false, read_bytes: state.max_bytes}}
+    end
+  end
+
+  defp scan_window(data, state) do
+    {records, consumed} = scan(data, state.demand, [], 0)
+
+    cond do
+      consumed > 0 ->
+        {records, consumed, %{state | read_bytes: state.max_bytes}}
+
+      byte_size(data) < state.read_bytes ->
+        {[], 0, state}
+
+      state.read_bytes < state.max_line_bytes ->
+        {[], 0, %{state | read_bytes: min(state.read_bytes * 2, state.max_line_bytes)}}
+
+      true ->
+        Logger.warning(
+          "leash collector: discarding JSONL line exceeding #{state.max_line_bytes} bytes"
+        )
+
+        {[], byte_size(data), %{state | discarding: true, read_bytes: state.max_bytes}}
+    end
+  end
+
+  defp scan(_data, 0, events, consumed), do: {Enum.reverse(events), consumed}
+
+  defp scan(data, demand, events, consumed) do
+    case :binary.match(data, "\n") do
+      :nomatch ->
+        {Enum.reverse(events), consumed}
+
+      {at, 1} ->
+        line = binary_part(data, 0, at)
+        rest = binary_part(data, at + 1, byte_size(data) - at - 1)
+
+        case Jason.decode(line) do
+          {:ok, json} ->
+            if Record.audit?(json) do
+              scan(rest, demand - 1, [{json, consumed} | events], consumed + at + 1)
+            else
+              scan(rest, demand, events, consumed + at + 1)
+            end
+
+          {:error, _} ->
+            if line != "", do: Logger.warning("leash collector: skipping malformed JSONL line")
+            scan(rest, demand, events, consumed + at + 1)
+        end
     end
   end
 
   defp resume(state) do
-    with {:ok, stat} <- File.stat(state.path),
-         {:ok, offset, inode} <- read_cursor(state),
+    with {:ok, raw} <- File.read(state.cursor_path),
+         {:ok, %{"offset" => offset, "inode" => inode}}
+         when is_integer(offset) and offset >= 0 and is_integer(inode) <- Jason.decode(raw),
+         {:ok, stat} <- File.stat(state.path),
          true <- inode == stat.inode and stat.size >= offset do
-      %{state | offset: offset, inode: inode}
+      cursor = Jason.decode!(raw)
+      %{state | offset: offset, inode: inode, discarding: cursor["discarding"] == true}
     else
       _ -> state
     end
   end
 
-  # Cursor sanity: resume only when the same file still contains the cursor
-  # offset; anything else (rotation, truncation, stale cursor) replays from 0.
-  defp start_offset(state, stat) do
-    cond do
-      state.inode == nil -> resume_offset(state, stat)
-      state.inode == stat.inode and stat.size >= state.offset -> state.offset
-      true -> 0
-    end
-  end
+  defp checkpoint(%{inode: nil} = state), do: state
 
-  defp resume_offset(state, stat) do
-    case read_cursor(state) do
-      {:ok, offset, inode} when inode == stat.inode and stat.size >= offset -> offset
-      _ -> 0
-    end
-  end
+  defp checkpoint(state) do
+    content =
+      Jason.encode!(%{offset: state.offset, inode: state.inode, discarding: state.discarding}) <>
+        "\n"
 
-  defp scan(path, offset, demand, max_bytes) do
-    case :file.open(path, [:read, :binary]) do
-      {:ok, device} ->
-        result =
-          with {:ok, _position} <- :file.position(device, offset),
-               {:ok, data} <- :file.read(device, max_bytes) do
-            {:ok, data}
-          end
+    temporary = state.cursor_path <> ".tmp"
 
-        :file.close(device)
-
-        case result do
-          {:ok, data} ->
-            scan_chunk(data, demand)
-
-          :eof ->
-            # Fully consumed; nothing to index this poll.
-            {[], 0, false}
-
-          other ->
-            debug("cannot read #{path} at offset #{offset}: #{inspect(other)}")
-            {[], 0, false}
-        end
-
-      {:error, reason} ->
-        debug("cannot open #{path}: #{inspect(reason)}")
-        {[], 0, false}
-    end
-  end
-
-  # Consume only complete (newline-terminated) lines, at most `demand`
-  # audit events, and stop exactly after the last examined line so nothing
-  # is lost between polls. A trailing partial line (the proxy may still be
-  # flushing it) is left for a later poll — this also guarantees the
-  # consumed offset never runs past the end of the file.
-  defp scan_chunk(data, demand) do
-    case :binary.matches(data, "\n") do
-      [] ->
-        {[], 0, false}
-
-      matches ->
-        {last_newline_at, 1} = List.last(matches)
-        complete = binary_part(data, 0, last_newline_at + 1)
-
-        complete
-        |> String.split("\n", trim: true)
-        |> scan_lines(demand, [], 0, 0)
-    end
-  end
-
-  defp scan_lines([], _demand, events, consumed, _backlog),
-    do: {Enum.reverse(events), consumed, false}
-
-  defp scan_lines(_rest, 0, events, consumed, _backlog),
-    do: {Enum.reverse(events), consumed, true}
-
-  defp scan_lines([line | rest], demand, events, consumed, emitted) do
-    line_bytes = byte_size(line) + 1
-
-    case decode(line) do
-      {:ok, json} when emitted < demand ->
-        message = to_message(json, consumed)
-        scan_lines(rest, demand, [message | events], consumed + line_bytes, emitted + 1)
-
-      {:ok, _json} ->
-        # Demand exhausted; rewind to before this line (re-read next poll).
-        {Enum.reverse(events), consumed, true}
-
-      {:skip, reason} ->
-        debug("skipped non-indexable line: #{reason}")
-        scan_lines(rest, demand, events, consumed + line_bytes, emitted)
-
-      {:error, reason} ->
-        # Undecodable line; log and consume it so a single bad line cannot
-        # wedge the tail loop forever.
-        Logger.warning("leash collector: malformed JSONL line: #{reason}")
-        scan_lines(rest, demand, events, consumed + line_bytes, emitted)
-    end
-  end
-
-  defp decode("") do
-    {:skip, "empty line"}
-  end
-
-  defp decode(line) do
-    case Jason.decode(line) do
-      {:ok, json} when is_map(json) ->
-        if Record.audit?(json) do
-          {:ok, json}
-        else
-          {:skip, "target=#{json["target"] || "none"}"}
-        end
-
-      {:ok, _other} ->
-        {:skip, "not an object"}
-
-      {:error, %Jason.DecodeError{} = error} ->
-        {:error, Exception.message(error)}
-    end
-  end
-
-  defp to_message(json, offset) do
-    %Message{
-      data: json,
-      acknowledger: NoopAcknowledger.init(),
-      metadata: %{"offset" => offset}
-    }
-  end
-
-  ## Cursor persistence
-
-  defp default_cursor_path(path) do
-    dir = Path.dirname(path)
-    Path.join(dir, ".#{Path.basename(path)}.cursor")
-  end
-
-  defp read_cursor(state) do
-    with {:ok, raw} <- File.read(state.cursor_path),
-         {:ok, %{"offset" => offset, "inode" => inode}}
-         when is_integer(offset) and is_integer(inode) <-
-           Jason.decode(raw) do
-      {:ok, offset, inode}
+    with :ok <- File.mkdir_p(Path.dirname(state.cursor_path)),
+         :ok <- File.write(temporary, content, [:sync]),
+         :ok <- File.rename(temporary, state.cursor_path) do
+      state
     else
-      _ -> :error
-    end
-  end
-
-  defp flush_cursor(%{offset: 0, inode: nil} = state), do: state
-
-  defp flush_cursor(state) do
-    content = Jason.encode!(%{"offset" => state.offset, "inode" => state.inode})
-
-    case File.write(state.cursor_path, content <> "\n") do
-      :ok ->
-        state
-
       {:error, reason} ->
-        debug("cannot write cursor #{state.cursor_path}: #{inspect(reason)}")
+        Logger.warning("leash collector: cannot checkpoint cursor: #{inspect(reason)}")
         state
     end
   end
-
-  defp debug(message), do: Logger.debug("leash collector: #{message}")
 end

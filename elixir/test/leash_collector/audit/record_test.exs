@@ -90,6 +90,24 @@ defmodule LeashCollector.Audit.RecordTest do
     assert params.deny_reason == ""
   end
 
+  test "malformed field types return errors instead of crashing processors" do
+    for {field, value} <- [
+          {"status", "not-a-number"},
+          {"port", %{}},
+          {"latency_ms", []},
+          {"bytes_in", -1},
+          {"bytes_out", 9_223_372_036_854_775_808},
+          {"host", %{}},
+          {"headers", %{}},
+          {"policy_ids", [%{}]},
+          {"decision", "pending"}
+        ] do
+      assert {:error, _} = Record.from_json(Map.put(@audit_event, field, value))
+    end
+
+    assert {:error, :not_an_object} = Record.from_json(nil)
+  end
+
   test "from_json/1 rejects records with missing required fields" do
     assert {:error, {:missing_fields, missing}} =
              Record.from_json(%{"target" => "leash_proxy::audit"})

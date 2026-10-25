@@ -1,161 +1,142 @@
 defmodule LeashCollector.JsonlTailProducerTest do
-  @moduledoc """
-  Tests the Broadway file-tail producer in isolation (ADR 0003): audit-only
-  emission, cursor persistence/resume, and truncation replay.
-  """
-
   use ExUnit.Case, async: true
 
-  alias LeashCollector.JsonlTailProducer
+  alias LeashCollector.JsonlTailProducer, as: Producer
 
-  defp audit_line(id, extra \\ %{}) do
-    Jason.encode!(
-      Map.merge(
-        %{
-          "timestamp" => "2026-10-25T12:00:00Z",
-          "target" => "leash_proxy::audit",
-          "request_id" => "req-#{id}",
-          "agent_id" => "agent-1",
-          "method" => "GET",
-          "scheme" => "https",
-          "host" => "api.github.com",
-          "decision" => "allow"
-        },
-        Map.new(extra)
-      )
-    )
-  end
-
-  defp op_line(message) do
-    Jason.encode!(%{
-      "timestamp" => "2026-10-25T12:00:00Z",
-      "target" => "leash_proxy::proxy",
-      "message" => message
-    })
-  end
-
-  defp tmp_path(name) do
-    dir = System.tmp_dir!() |> Path.join("leash-tail-#{System.unique_integer([:positive])}")
+  setup do
+    dir = Path.join(System.tmp_dir!(), "leash-tail-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
-    Path.join(dir, name)
+    path = Path.join(dir, "audit.jsonl")
+    cursor = Path.join(dir, "cursor")
+    {:producer, state} = Producer.init(path: path, cursor_path: cursor)
+    {:ok, path: path, cursor: cursor, state: state}
   end
 
-  defp write!(path, lines) do
-    File.write!(path, Enum.join(lines, "\n") <> "\n")
+  defp line(id), do: Jason.encode!(%{target: "leash_proxy::audit", request_id: id}) <> "\n"
+
+  defp poll(state, demand \\ 10) do
+    {:noreply, [], state} = Producer.handle_demand(demand, state)
+    {:noreply, events, state} = Producer.handle_info(:poll, state)
+    {events, state}
   end
 
-  # Collect up to `n` messages with a timeout so tests do not block forever
-  # when the producer has nothing more to emit.
-  defp collect(producer, n, timeout \\ 1000) do
-    task =
-      Task.async(fn ->
-        [producer]
-        |> GenStage.stream()
-        |> Enum.take(n)
-      end)
-
-    case Task.yield(task, timeout) do
-      {:ok, events} ->
-        events
-
-      nil ->
-        Task.shutdown(task, :brutal_kill)
-        # Give the producer time to process the subscription cancel (monitor
-        # DOWN) so a just-killed consumer cannot swallow a later emission.
-        Process.sleep(25)
-        []
-    end
+  defp acknowledge(events, state, failed \\ []) do
+    [{_, ref, _} | _] = Enum.map(events ++ failed, & &1.acknowledger)
+    :ok = Producer.ack(ref, events, failed)
+    assert_receive {:ack, token, good, bad}
+    {:noreply, [], state} = Producer.handle_info({:ack, token, good, bad}, state)
+    state
   end
 
-  defp request_ids(events) do
-    Enum.map(events, & &1.data["request_id"])
+  test "checkpoints only after acknowledgement and resumes", %{
+    path: path,
+    cursor: cursor,
+    state: state
+  } do
+    File.write!(path, line("one") <> line("two"))
+    {[one, two], state} = poll(state)
+    refute File.exists?(cursor)
+    assert {[], _} = poll(state)
+    state = acknowledge([one], state)
+    refute File.exists?(cursor)
+    _state = acknowledge([two], state)
+    assert Jason.decode!(File.read!(cursor))["offset"] == byte_size(File.read!(path))
+
+    {:producer, resumed} = Producer.init(path: path, cursor_path: cursor)
+    assert {[], resumed} = poll(resumed)
+    File.write!(path, line("three"), [:append])
+    assert {[%{data: %{"request_id" => "three"}}], _} = poll(resumed)
   end
 
-  defp start_producer!(path, cursor_path) do
-    {:ok, pid} =
-      JsonlTailProducer.start_link(path: path, cursor_path: cursor_path, poll_interval: 10)
-
-    pid
+  test "unacknowledged messages are replayed after restart", %{
+    path: path,
+    cursor: cursor,
+    state: state
+  } do
+    File.write!(path, line("one"))
+    assert {[_], _} = poll(state)
+    {:producer, resumed} = Producer.init(path: path, cursor_path: cursor)
+    assert {[%{data: %{"request_id" => "one"}}], _} = poll(resumed)
   end
 
-  defp read_cursor(cursor_path) do
-    assert {:ok, raw} = File.read(cursor_path)
-    assert {:ok, cursor} = Jason.decode(raw)
-    cursor
+  test "failed chunks are replayed, including successful messages", %{path: path, state: state} do
+    File.write!(path, line("one") <> line("two"))
+    {[one, two], state} = poll(state)
+    state = acknowledge([two], state, [one])
+
+    assert {[%{data: %{"request_id" => "one"}}, %{data: %{"request_id" => "two"}}], _} =
+             poll(state)
   end
 
-  test "emits only audit lines and consumes skipped ones" do
-    path = tmp_path("audit.jsonl")
-    cursor = tmp_path("audit.cursor")
-    write!(path, [op_line("connect"), audit_line("1"), op_line("close"), audit_line("2")])
+  test "respects demand and counts blank and non-audit lines in byte offsets", %{
+    path: path,
+    cursor: cursor,
+    state: state
+  } do
+    File.write!(path, "\n{}\ninvalid\n" <> line("one") <> line("two"))
+    {[one], state} = poll(state, 1)
+    assert one.data["request_id"] == "one"
+    state = acknowledge([one], state)
 
-    producer = start_producer!(path, cursor)
+    assert Jason.decode!(File.read!(cursor))["offset"] ==
+             byte_size("\n{}\ninvalid\n" <> line("one"))
 
-    assert request_ids(collect(producer, 2)) == ["req-1", "req-2"]
-    # Cursor covers all four lines: skipped operational lines are consumed
-    # so they are not re-examined on every poll.
-    assert read_cursor(cursor)["offset"] == byte_size(File.read!(path))
+    assert {[%{data: %{"request_id" => "two"}}], _} = poll(state, 1)
   end
 
-  test "resumes from the cursor on restart without replaying" do
-    path = tmp_path("audit.jsonl")
-    cursor = tmp_path("audit.cursor")
-    write!(path, [audit_line("1"), audit_line("2")])
-
-    producer = start_producer!(path, cursor)
-    assert request_ids(collect(producer, 1)) == ["req-1"]
-    assert read_cursor(cursor)["offset"] > 0
-
-    # Restart with the same cursor: nothing is replayed...
-    producer2 = start_producer!(path, cursor)
-    assert [] = collect(producer2, 1, 200)
-
-    # ...and newly appended lines are picked up.
-    File.write!(path, File.read!(path) <> audit_line("3") <> "\n")
-    assert request_ids(collect(producer2, 1)) == ["req-3"]
-  end
-
-  test "replays the file from byte 0 after truncation" do
-    path = tmp_path("audit.jsonl")
-    cursor = tmp_path("audit.cursor")
-    write!(path, [audit_line("1"), audit_line("2")])
-
-    producer = start_producer!(path, cursor)
-    assert request_ids(collect(producer, 2)) == ["req-1", "req-2"]
-
-    # Truncate and write shorter content: the old cursor is invalid, so the
-    # whole file is replayed (idempotent inserts make this safe).
-    File.write!(path, audit_line("short") <> "\n")
-    assert request_ids(collect(producer, 1)) == ["req-short"]
-  end
-
-  test "does not consume an incomplete trailing line" do
-    path = tmp_path("audit.jsonl")
-    cursor = tmp_path("audit.cursor")
-    write!(path, [audit_line("1")])
-    # Simulate a partially flushed record still being written (no newline).
-    File.write!(path, audit_line("2"), [:append])
-
-    producer = start_producer!(path, cursor)
-
-    assert request_ids(collect(producer, 1)) == ["req-1"]
-    assert [] = collect(producer, 1, 100)
-
-    # Once the line is terminated, it is picked up.
+  test "waits for newline and for a missing file", %{path: path, state: state} do
+    assert {[], state} = poll(state)
+    File.write!(path, String.trim_trailing(line("one")))
+    assert {[], state} = poll(state)
     File.write!(path, "\n", [:append])
-    assert request_ids(collect(producer, 1)) == ["req-2"]
-    assert read_cursor(cursor)["offset"] == byte_size(File.read!(path))
+    assert {[%{data: %{"request_id" => "one"}}], _} = poll(state)
   end
 
-  test "waits quietly when the log file does not exist yet" do
-    path = tmp_path("audit.jsonl")
-    cursor = tmp_path("audit.cursor")
+  test "replays on truncation and rotation", %{path: path, state: state} do
+    File.write!(path, line("long-request-id"))
+    {events, state} = poll(state)
+    state = acknowledge(events, state)
+    File.write!(path, line("short"))
+    {events, state} = poll(state)
+    assert [%{data: %{"request_id" => "short"}}] = events
+    state = acknowledge(events, state)
+    File.rename!(path, path <> ".old")
+    File.write!(path, line("rotated"))
+    assert {[%{data: %{"request_id" => "rotated"}}], _} = poll(state)
+  end
 
-    producer = start_producer!(path, cursor)
-    assert [] = collect(producer, 1, 100)
+  test "lines spanning read chunks do not wedge ingestion", %{path: path, state: state} do
+    File.write!(path, line(String.duplicate("x", 300)))
+    state = %{state | max_bytes: 64, read_bytes: 64}
+    assert {[], state} = poll(state)
+    assert {[], state} = poll(state)
+    assert {[], state} = poll(state)
+    assert {[%{data: %{"request_id" => id}}], _} = poll(state)
+    assert byte_size(id) == 300
+  end
 
-    write!(path, [audit_line("1")])
-    assert request_ids(collect(producer, 1)) == ["req-1"]
+  test "oversized lines are discarded through newline before resuming", %{
+    path: path,
+    cursor: cursor,
+    state: state
+  } do
+    File.write!(path, String.duplicate("x", 200) <> "\n" <> line("good"))
+    state = %{state | max_bytes: 64, read_bytes: 64, max_line_bytes: 128}
+    assert {[], state} = poll(state)
+    assert {[], _state} = poll(state)
+    # The cursor also preserves discarding mode across a restart.
+    {:producer, state} =
+      Producer.init(path: path, cursor_path: cursor, max_bytes: 64, max_line_bytes: 128)
+
+    assert {[], state} = poll(state)
+    assert {[], state} = poll(state)
+    assert {[%{data: %{"request_id" => "good"}}], _} = poll(state)
+  end
+
+  test "draining stops new emissions", %{path: path, state: state} do
+    File.write!(path, line("one"))
+    {:noreply, [], state} = Producer.prepare_for_draining(state)
+    assert {[], _} = poll(state)
   end
 end

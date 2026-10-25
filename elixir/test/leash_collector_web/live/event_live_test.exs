@@ -1,165 +1,114 @@
 defmodule LeashCollectorWeb.EventLiveTest do
-  @moduledoc false
   use LeashCollectorWeb.ConnCase, async: false
-
   import Phoenix.LiveViewTest
-
   alias LeashCollector.Audit
 
-  defp record(overrides \\ %{}) do
-    Map.merge(
-      %{
-        ts: DateTime.utc_now() |> DateTime.truncate(:second),
-        request_id: "req-#{System.unique_integer([:positive])}",
-        agent_id: "agent-1",
-        source_ip: "10.0.0.5",
-        method: "GET",
-        scheme: "https",
-        host: "api.github.com",
-        port: 443,
-        path: "/api/v3/user",
-        headers: ~s({"user-agent": ["curl/8.0"]}),
-        decision: "allow",
-        engine: "cedar",
-        policy_ids: "p1",
-        deny_reason: "",
-        status: 200,
-        bytes_in: 100,
-        bytes_out: 200,
-        latency_ms: 10.0,
-        tls: "intercepted",
-        error: ""
-      },
-      Map.new(overrides)
-    )
+  defp insert!(overrides) do
+    Audit.insert_batch([
+      Map.merge(
+        %{
+          ts: DateTime.utc_now() |> DateTime.truncate(:second),
+          request_id: "req-#{System.unique_integer([:positive])}",
+          agent_id: "agent-1",
+          source_ip: "10.0.0.5",
+          method: "GET",
+          scheme: "https",
+          host: "api.github.com",
+          port: 443,
+          path: "/api/v3/user",
+          headers: "{}",
+          decision: "allow",
+          engine: "cedar",
+          policy_ids: "p1",
+          deny_reason: "",
+          status: 200,
+          bytes_in: 100,
+          bytes_out: 200,
+          latency_ms: 10.0,
+          tls: "intercepted",
+          error: ""
+        },
+        overrides
+      )
+    ])
   end
 
-  defp insert!(overrides), do: Audit.insert_batch([record(overrides)])
-
-  describe "home" do
-    test "renders the overview with live counts", %{conn: conn} do
-      insert!(%{decision: "deny", host: "nope.example"})
-      insert!(%{decision: "allow"})
-
-      {:ok, view, html} = live(conn, ~p"/")
-
-      assert html =~ "Proxy audit overview"
-      assert view |> has_element?("div", "2")
-      assert view |> has_element?("span", "1")
-      assert html =~ "nope.example"
-    end
+  test "overview shows counts and denied hosts", %{conn: conn} do
+    insert!(%{decision: "deny", host: "nope.example"})
+    insert!(%{decision: "allow"})
+    {:ok, view, _} = live(conn, ~p"/")
+    assert has_element?(view, "#overview-total", "2")
+    assert has_element?(view, "#overview-allow", "1")
+    assert has_element?(view, "#overview-deny", "1")
+    assert has_element?(view, "#top-denied-hosts", "nope.example")
   end
 
-  describe "index" do
-    test "lists indexed events with newest first", %{conn: conn} do
-      insert!(%{
-        request_id: "req-old",
-        ts: DateTime.add(DateTime.utc_now(), -60, :second) |> DateTime.truncate(:second)
-      })
-
-      insert!(%{request_id: "req-new", status: 403})
-
-      {:ok, _view, html} = live(conn, ~p"/events?since=all")
-
-      assert html =~ "req-new"
-      assert html =~ "api.github.com"
-    end
-
-    test "filters events by decision and host", %{conn: conn} do
-      insert!(%{request_id: "req-deny", decision: "deny", host: "evil.example"})
-      insert!(%{request_id: "req-ok", host: "api.github.com"})
-
-      {:ok, view, _html} = live(conn, ~p"/events?since=all")
-
-      html =
-        view
-        |> render_change("filter", %{
-          "decision" => "deny",
-          "agent_id" => "",
-          "host" => "",
-          "path" => "",
-          "since" => "all"
-        })
-
-      assert html =~ "req-deny"
-      refute html =~ "req-ok"
-
-      html =
-        view
-        |> render_change("filter", %{
-          "decision" => "",
-          "agent_id" => "",
-          "host" => "github.com",
-          "path" => "",
-          "since" => "all"
-        })
-
-      assert html =~ "req-ok"
-      refute html =~ "req-deny"
-    end
-
-    test "paginates", %{conn: conn} do
-      for i <- 1..55 do
-        insert!(%{request_id: "req-#{i}"})
-      end
-
-      {:ok, view, html} = live(conn, ~p"/events?since=all")
-
-      assert html =~ "55 matching events"
-
-      html = render_click(view, :page, %{"page" => "2"})
-      assert html =~ "Page 2 of 2"
-    end
-
-    test "refreshes the list when a batch is ingested", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/events?since=all")
-      refute html =~ "req-live"
-
-      insert!(%{request_id: "req-live"})
-
-      assert eventually(fn -> render(view) =~ "req-live" end, 1000)
-    end
+  test "URL filters are applied, including historical events", %{conn: conn} do
+    insert!(%{request_id: "old", ts: ~U[2020-01-01 00:00:00Z], host: "old.example"})
+    insert!(%{request_id: "new"})
+    {:ok, view, _} = live(conn, ~p"/events?since=all&host=old.example")
+    assert has_element?(view, "#matching-count", "1 matching events")
+    assert has_element?(view, "#events", "old.example")
+    refute has_element?(view, "#events", "api.github.com")
   end
 
-  describe "show" do
-    test "shows a single event with details", %{conn: conn} do
-      insert!(%{
-        request_id: "req-detail",
-        decision: "deny",
-        deny_reason: "host not in allowlist",
-        path: "/secrets"
-      })
-
-      {:ok, _view, html} = live(conn, ~p"/events/req-detail")
-
-      assert html =~ "req-detail"
-      assert html =~ "host not in allowlist"
-      assert html =~ "/secrets"
-    end
-
-    test "redirects for an unknown request id", %{conn: conn} do
-      {:error, {:live_redirect, %{to: to}}} = live(conn, ~p"/events/req-missing")
-
-      assert to == ~p"/events"
-    end
+  test "form filters by decision and reset restores defaults", %{conn: conn} do
+    insert!(%{decision: "deny", host: "evil.example"})
+    insert!(%{})
+    {:ok, view, _} = live(conn, ~p"/events?since=all")
+    view |> form("#event-filters", %{"decision" => "deny"}) |> render_change()
+    assert has_element?(view, "#events", "evil.example")
+    refute has_element?(view, "#events", "api.github.com")
+    view |> element("#reset-filters") |> render_click()
+    assert has_element?(view, "#matching-count", "2 matching events")
   end
 
-  defp eventually(fun, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    do_eventually(fun, deadline)
+  test "paginates and tolerates invalid URL pages", %{conn: conn} do
+    for i <- 1..55, do: insert!(%{request_id: "req-#{i}"})
+    {:ok, view, _} = live(conn, ~p"/events?since=all&page=invalid")
+    assert has_element?(view, "#matching-count", "55 matching events")
+    assert row_count(view) == 50
+    view |> element("#older-page") |> render_click()
+    assert has_element?(view, "#page-number", "Page 2 of 2")
+    assert row_count(view) == 5
   end
 
-  defp do_eventually(fun, deadline) do
-    if fun.() do
-      true
-    else
-      if System.monotonic_time(:millisecond) >= deadline do
-        false
-      else
-        Process.sleep(50)
-        do_eventually(fun, deadline)
-      end
-    end
+  test "live updates pause and catch up on resume", %{conn: conn} do
+    {:ok, view, _} = live(conn, ~p"/events?since=all")
+    insert!(%{host: "live.example"})
+    send(view.pid, :refresh)
+    assert has_element?(view, "#events", "live.example")
+    view |> element("#toggle-live") |> render_click()
+    insert!(%{host: "paused.example"})
+    send(view.pid, :refresh)
+    refute has_element?(view, "#events", "paused.example")
+    assert has_element?(view, "#toggle-live", "Paused")
+    view |> element("#toggle-live") |> render_click()
+    assert has_element?(view, "#events", "paused.example")
+  end
+
+  test "shows full event details", %{conn: conn} do
+    insert!(%{
+      request_id: "detail",
+      decision: "deny",
+      deny_reason: "host not in allowlist",
+      path: "/secrets"
+    })
+
+    {:ok, view, _} = live(conn, ~p"/events/detail")
+    assert has_element?(view, "#event-detail", "host not in allowlist")
+    assert has_element?(view, "#event-detail", "/secrets")
+  end
+
+  defp row_count(view) do
+    view
+    |> render()
+    |> LazyHTML.from_document()
+    |> LazyHTML.query("#events tr:not(#events-empty)")
+    |> Enum.count()
+  end
+
+  test "redirects for an unknown request", %{conn: conn} do
+    assert {:error, {:live_redirect, %{to: "/events"}}} = live(conn, ~p"/events/missing")
   end
 end

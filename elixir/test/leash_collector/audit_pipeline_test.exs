@@ -52,30 +52,67 @@ defmodule LeashCollector.AuditPipelineTest do
   end
 
   defp start_pipeline!(path, cursor) do
-    {:ok, pid} =
-      AuditPipeline.start_link(
-        name: AuditPipelineTest.Pipeline,
-        producer: [
-          module: {JsonlTailProducer, [path: path, cursor_path: cursor, poll_interval: 10]}
-        ]
-      )
-
-    pid
+    start_supervised!(
+      {AuditPipeline,
+       name: AuditPipelineTest.Pipeline,
+       producer: [
+         module: {JsonlTailProducer, [path: path, cursor_path: cursor, poll_interval: 10]}
+       ],
+       batchers: [audit_events: [concurrency: 1, batch_size: 200, batch_timeout: 20]]}
+    )
   end
 
-  defp eventually(fun, timeout \\ 5_000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
+  test "a replacement producer can deliver JSON payloads with duplicates and invalid records" do
+    pipeline = LeashCollector.AuditPipelineTest.BrokerPipeline
 
-    if fun.() do
-      :ok
-    else
-      if System.monotonic_time(:millisecond) > deadline do
-        flunk("condition not met within #{timeout}ms")
-      else
-        Process.sleep(50)
-        eventually(fun, deadline - System.monotonic_time(:millisecond))
-      end
-    end
+    start_supervised!(
+      {AuditPipeline,
+       name: pipeline,
+       producer: [module: {Broadway.DummyProducer, []}],
+       batchers: [audit_events: [concurrency: 1, batch_size: 200, batch_timeout: 20]]}
+    )
+
+    LeashCollector.Audit.subscribe()
+
+    ref =
+      Broadway.test_batch(pipeline, [
+        audit_line("broker"),
+        audit_line("broker"),
+        audit_line("invalid", %{"status" => "bad"}),
+        "not JSON"
+      ])
+
+    assert_receive {:ack, ^ref, successful, []}, 2_000
+    assert length(successful) == 4
+    assert_receive {:audit_events_inserted, 1}
+    assert Repo.aggregate(LeashCollector.Audit.Event, :count) == 1
+  end
+
+  test "database failures produce failed acknowledgements and a replay succeeds" do
+    pipeline = LeashCollector.AuditPipelineTest.RetryPipeline
+
+    start_supervised!(
+      {AuditPipeline,
+       name: pipeline,
+       producer: [module: {Broadway.DummyProducer, []}],
+       batchers: [audit_events: [concurrency: 1, batch_size: 1, batch_timeout: 20]]}
+    )
+
+    Repo.query!(
+      "CREATE TEMP TRIGGER reject_audit BEFORE INSERT ON audit_events BEGIN SELECT RAISE(FAIL, 'sink unavailable'); END"
+    )
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      ref = Broadway.test_message(pipeline, audit_line("retry"))
+      assert_receive {:ack, ^ref, [], [_failed]}, 2_000
+    end)
+
+    assert Repo.aggregate(LeashCollector.Audit.Event, :count) == 0
+
+    Repo.query!("DROP TRIGGER reject_audit")
+    ref = Broadway.test_message(pipeline, audit_line("retry"))
+    assert_receive {:ack, ^ref, [_successful], []}, 2_000
+    assert Repo.get_by!(LeashCollector.Audit.Event, request_id: "req-retry")
   end
 
   test "tails the JSONL log into SQLite, skipping non-audit lines" do
@@ -84,9 +121,11 @@ defmodule LeashCollector.AuditPipelineTest do
 
     File.write!(path, Enum.join([op_line("up"), audit_line("1"), op_line("down")], "\n") <> "\n")
 
+    LeashCollector.Audit.subscribe()
     start_pipeline!(path, cursor)
 
-    assert eventually(fn -> Repo.aggregate(LeashCollector.Audit.Event, :count) == 1 end)
+    assert_receive {:audit_events_inserted, 1}, 2_000
+    assert Repo.aggregate(LeashCollector.Audit.Event, :count) == 1
 
     event = Repo.get_by!(LeashCollector.Audit.Event, request_id: "req-1")
     assert event.host == "api.github.com"
@@ -97,9 +136,7 @@ defmodule LeashCollector.AuditPipelineTest do
     # New appends flow through the pipeline while it is running.
     File.write!(path, audit_line("2", %{"status" => 500}) <> "\n", [:append])
 
-    assert eventually(fn ->
-             event2 = Repo.get_by(LeashCollector.Audit.Event, request_id: "req-2")
-             event2 != nil and event2.status == 500
-           end)
+    assert_receive {:audit_events_inserted, 1}, 2_000
+    assert Repo.get_by!(LeashCollector.Audit.Event, request_id: "req-2").status == 500
   end
 end

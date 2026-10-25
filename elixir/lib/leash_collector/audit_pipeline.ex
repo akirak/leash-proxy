@@ -13,7 +13,7 @@ defmodule LeashCollector.AuditPipeline do
   The producer is transport-specific (file tailing today, a message broker
   later); everything downstream of it is transport-agnostic. To use a broker
   instead, replace the producer module below with a broker producer
-  (e.g. `OffBroadway.Kafka.Producer`) and keep this module unchanged.
+  (e.g. `BroadwayKafka.Producer`) and keep this module unchanged.
   """
 
   use Broadway
@@ -25,7 +25,8 @@ defmodule LeashCollector.AuditPipeline do
   alias LeashCollector.Audit.Record
 
   def start_link(opts \\ []) do
-    opts = Keyword.merge(default_opts(), opts)
+    configured = Application.get_env(:leash_collector, :audit_pipeline, [])
+    opts = default_opts() |> Keyword.merge(configured) |> Keyword.merge(opts)
     Broadway.start_link(__MODULE__, opts)
   end
 
@@ -33,10 +34,11 @@ defmodule LeashCollector.AuditPipeline do
     [
       name: __MODULE__,
       producer: [
-        module: {LeashCollector.JsonlTailProducer, producer_opts()}
+        module: {LeashCollector.JsonlTailProducer, producer_opts()},
+        concurrency: 1
       ],
       processors: [
-        default: [concurrency: 2]
+        default: [concurrency: 2, max_demand: 200]
       ],
       batchers: [
         audit_events: [concurrency: 1, batch_size: 200, batch_timeout: 1_000]
@@ -56,7 +58,17 @@ defmodule LeashCollector.AuditPipeline do
   def handle_message(_processor, %Message{} = message, _context) do
     message = Message.put_batcher(message, :audit_events)
 
-    case Record.from_json(message.data) do
+    json =
+      if is_binary(message.data) do
+        case Jason.decode(message.data) do
+          {:ok, decoded} -> decoded
+          _ -> nil
+        end
+      else
+        message.data
+      end
+
+    case Record.from_json(json) do
       {:ok, params} ->
         Message.put_data(message, params)
 

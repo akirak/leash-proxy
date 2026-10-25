@@ -41,32 +41,34 @@ defmodule LeashCollectorWeb.EventLive.Show do
         </:actions>
       </.header>
 
-      <.list>
-        <:item title="Timestamp">{format_ts(@event.ts)}</:item>
-        <:item title="Decision">
-          {@event.decision}
-          <span :if={@event.decision == "deny"} class="text-sm text-base-content/70">
-            {@event.deny_reason}
-          </span>
-        </:item>
-        <:item title="Policy engine">{@event.engine}</:item>
-        <:item title="Determining policies">{@event.policy_ids}</:item>
-        <:item title="Source">{@event.source_ip}</:item>
-        <:item title="Target">
-          {@event.scheme}://{@event.host}:{@event.port}{@event.path}
-        </:item>
-        <:item title="Method">{@event.method}</:item>
-        <:item title="Status">{@event.status}</:item>
-        <:item title="Latency">{format_latency(@event.latency_ms)}</:item>
-        <:item title="Bytes in / out">
-          {format_bytes(@event.bytes_in)} / {format_bytes(@event.bytes_out)}
-        </:item>
-        <:item title="TLS">{@event.tls}</:item>
-        <:item :if={@event.error != ""} title="Transport error">{@event.error}</:item>
-        <:item title="Recorded headers (proxy allowlist, redacted)">
-          <pre class="mt-1 max-w-xl overflow-x-auto rounded bg-base-200 p-2 text-xs">{@event.headers}</pre>
-        </:item>
-      </.list>
+      <div id="event-detail">
+        <.list>
+          <:item title="Timestamp">{format_ts(@event.ts)}</:item>
+          <:item title="Decision">
+            {@event.decision}
+            <span :if={@event.decision == "deny"} class="text-sm text-base-content/70">
+              {@event.deny_reason}
+            </span>
+          </:item>
+          <:item title="Policy engine">{@event.engine}</:item>
+          <:item title="Determining policies">{@event.policy_ids}</:item>
+          <:item title="Source">{@event.source_ip}</:item>
+          <:item title="Target">
+            {@event.scheme}://{@event.host}:{@event.port}{@event.path}
+          </:item>
+          <:item title="Method">{@event.method}</:item>
+          <:item title="Status">{@event.status}</:item>
+          <:item title="Latency">{format_latency(@event.latency_ms)}</:item>
+          <:item title="Bytes in / out">
+            {format_bytes(@event.bytes_in)} / {format_bytes(@event.bytes_out)}
+          </:item>
+          <:item title="TLS">{@event.tls}</:item>
+          <:item :if={@event.error != ""} title="Transport error">{@event.error}</:item>
+          <:item title="Recorded headers (proxy allowlist, redacted)">
+            <pre class="mt-1 max-w-xl overflow-x-auto rounded bg-base-200 p-2 text-xs">{@event.headers}</pre>
+          </:item>
+        </.list>
+      </div>
     </Layouts.app>
     """
   end

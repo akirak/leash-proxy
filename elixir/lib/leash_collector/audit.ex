@@ -15,11 +15,11 @@ defmodule LeashCollector.Audit do
 
   @decisions ~w(allow deny)
   @windows %{
-    "15m" => 15,
-    "1h" => 1,
-    "6h" => 6,
-    "24h" => 24,
-    "7d" => 7 * 24
+    "15m" => 15 * 60,
+    "1h" => 60 * 60,
+    "6h" => 6 * 60 * 60,
+    "24h" => 24 * 60 * 60,
+    "7d" => 7 * 24 * 60 * 60
   }
 
   defdelegate insert_batch(records), to: Store
@@ -27,7 +27,7 @@ defmodule LeashCollector.Audit do
   defdelegate subscribe, to: Store
 
   def decisions, do: @decisions
-  def windows, do: Map.keys(@windows)
+  def windows, do: ~w(15m 1h 6h 24h 7d)
 
   @doc "Fetches a single event by its request id."
   def get_event(request_id) when is_binary(request_id) do
@@ -74,28 +74,26 @@ defmodule LeashCollector.Audit do
         where(query, [e], e.decision == ^decision)
 
       {:agent_id, agent}, query when is_binary(agent) and agent != "" ->
-        where(query, [e], like(e.agent_id, ^"%#{escape(agent)}%"))
+        where(query, [e], fragment("instr(lower(?), lower(?)) > 0", e.agent_id, ^agent))
 
       {:host, host}, query when is_binary(host) and host != "" ->
-        where(query, [e], like(e.host, ^"%#{escape(host)}%"))
+        where(query, [e], fragment("instr(lower(?), lower(?)) > 0", e.host, ^host))
 
       {:path, path}, query when is_binary(path) and path != "" ->
-        where(query, [e], like(e.path, ^"%#{escape(path)}%"))
+        where(query, [e], fragment("instr(lower(?), lower(?)) > 0", e.path, ^path))
 
       {:since, window}, query when window != "all" and is_map_key(@windows, window) ->
-        hours = Map.fetch!(@windows, window)
-        where(query, [e], e.ts >= ^ago(hours))
+        seconds = Map.fetch!(@windows, window)
+        where(query, [e], e.ts >= ^ago(seconds))
 
       _, query ->
         query
     end)
   end
 
-  defp ago(hours) do
-    DateTime.utc_now() |> DateTime.add(-hours, :hour) |> DateTime.truncate(:second)
+  defp ago(seconds) do
+    DateTime.utc_now() |> DateTime.add(-seconds, :second) |> DateTime.truncate(:second)
   end
-
-  defp escape(value), do: String.replace(value, "%", "\\%")
 
   @doc """
   Aggregated stats: event counts by decision and top denied hosts.

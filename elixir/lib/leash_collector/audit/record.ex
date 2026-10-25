@@ -20,12 +20,13 @@ defmodule LeashCollector.Audit.Record do
   @doc """
   Normalizes a decoded JSON object into `Event` params.
 
-  Returns `{:ok, params}` or `{:error, reason}` when required fields are
-  missing. Unknown/absent optional fields fall back to empty defaults so a
-  schema drift in the proxy never breaks ingestion.
+  Returns `{:ok, params}` or `{:error, reason}` for malformed fields.
+  Absent optional fields receive empty defaults and unknown fields are
+  ignored. Integers must fit SQLite's signed 64-bit range.
   """
   def from_json(json) when is_map(json) do
     with :ok <- require!(json),
+         :ok <- validate_types(json),
          {:ok, ts} <- parse_ts(json) do
       {:ok,
        %{
@@ -53,14 +54,50 @@ defmodule LeashCollector.Audit.Record do
     end
   end
 
+  def from_json(_), do: {:error, :not_an_object}
+
   defp require!(json) do
-    missing = Enum.filter(~w(request_id agent_id decision host method), &(json[&1] in [nil, ""]))
+    missing =
+      Enum.filter(
+        ~w(request_id agent_id decision host method),
+        &(not is_binary(json[&1]) or json[&1] == "")
+      )
 
     if missing == [] do
       :ok
     else
       {:error, {:missing_fields, missing}}
     end
+  end
+
+  defp validate_types(json) do
+    strings =
+      ~w(request_id agent_id source_ip method scheme host path headers engine deny_reason tls error)
+
+    integers = ~w(port status bytes_in bytes_out)
+
+    invalid =
+      Enum.find(strings, fn key -> not (is_nil(json[key]) or is_binary(json[key])) end) ||
+        Enum.find(integers, fn key ->
+          value = json[key]
+
+          not (is_nil(value) or
+                 (is_integer(value) and value >= 0 and value <= 9_223_372_036_854_775_807))
+        end) ||
+        if(
+          not (is_nil(json["latency_ms"]) or
+                 (is_number(json["latency_ms"]) and json["latency_ms"] >= 0 and
+                    json["latency_ms"] <= 9_223_372_036_854_775_807)),
+          do: "latency_ms"
+        ) ||
+        if(
+          not (is_nil(json["policy_ids"]) or is_binary(json["policy_ids"]) or
+                 (is_list(json["policy_ids"]) and Enum.all?(json["policy_ids"], &is_binary/1))),
+          do: "policy_ids"
+        ) ||
+        if(json["decision"] not in ~w(allow deny), do: "decision")
+
+    if invalid, do: {:error, {:invalid_field, invalid}}, else: :ok
   end
 
   defp parse_ts(json) do
@@ -77,7 +114,6 @@ defmodule LeashCollector.Audit.Record do
       nil -> ""
       value when is_binary(value) -> value
       value when is_list(value) -> Enum.join(value, ",")
-      value -> to_string(value)
     end
   end
 
@@ -85,8 +121,6 @@ defmodule LeashCollector.Audit.Record do
     case json[key] do
       nil -> 0
       value when is_integer(value) -> value
-      value when is_float(value) -> trunc(value)
-      value when is_binary(value) -> String.to_integer(value)
     end
   end
 
@@ -94,7 +128,6 @@ defmodule LeashCollector.Audit.Record do
     case json[key] do
       nil -> 0.0
       value when is_number(value) -> value * 1.0
-      value when is_binary(value) -> String.to_float(value)
     end
   end
 end
