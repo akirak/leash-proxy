@@ -26,7 +26,7 @@ header_allowlist = ["host", "user-agent", "accept", "content-type", "content-len
 | `server.listen` | Address and port the proxy listens on. |
 | `agents` | Static source IP → agent id mapping used for Cedar principals. |
 | `policy.schema` | Path to the Cedar schema file. |
-| `policy.policies` | Paths to the Cedar policy set files. |
+| `policy.policies` | Paths to the Cedar policy set files (Cedar text or Cedar JSON). |
 | `logging.log_file` | JSONL log destination; stdout when absent. |
 | `logging.header_allowlist` | Headers that may be recorded in audit logs. |
 
