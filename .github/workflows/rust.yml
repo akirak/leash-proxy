@@ -1,0 +1,74 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/rust.yml", "rust/**"]
+  pull_request:
+    paths: [".github/workflows/rust.yml", "rust/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_WORKSPACE: rust
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  lint:
+    name: Lint (rustfmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      # dtolnay/rust-toolchain (stable branch)
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          components: rustfmt, clippy
+
+      # Swatinem/rust-cache@v2.9.3
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: ${{ env.CARGO_WORKSPACE }}
+
+      # Splits formatting from linting so failures are easy to attribute.
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Check clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      # dtolnay/rust-toolchain (stable branch)
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+
+      # Swatinem/rust-cache@v2.9.3
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: ${{ env.CARGO_WORKSPACE }}
+
+      - name: Run tests
+        run: cargo test --all-features --all-targets --locked

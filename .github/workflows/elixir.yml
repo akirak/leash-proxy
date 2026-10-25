@@ -1,0 +1,92 @@
+name: Elixir
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/elixir.yml", "elixir/**"]
+  pull_request:
+    paths: [".github/workflows/elixir.yml", "elixir/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: elixir
+
+jobs:
+  lint:
+    name: Lint (format + warnings-as-errors)
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      # erlef/setup-beam@v1.24.1
+      - name: Install Erlang/Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          # Matches `mix.exs`. Use an explicit version if you need to pin.
+          elixir-version: "1.19"
+          otp-version: "28"
+
+      # actions/cache@v6.1.0
+      - name: Cache mix artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            elixir/deps
+            elixir/_build
+          key: ${{ runner.os }}-mix-${{ runner.arch }}-${{ hashFiles('elixir/mix.lock') }}
+
+      - name: Fetch dependencies
+        run: mix deps.get
+
+      # Mirrors the `mix precommit` gates that don't require running tests.
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Check for unlocked dependencies
+        run: mix deps.unlock --unused
+
+      - name: Compile with warnings as errors
+        run: mix compile --warnings-as-errors
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      # erlef/setup-beam@v1.24.1
+      - name: Install Erlang/Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          elixir-version: "1.19"
+          otp-version: "28"
+
+      # actions/cache@v6.1.0
+      - name: Cache mix artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            elixir/deps
+            elixir/_build
+          key: ${{ runner.os }}-mix-${{ runner.arch }}-${{ hashFiles('elixir/mix.lock') }}
+
+      - name: Fetch dependencies
+        run: mix deps.get
+
+      - name: Run tests
+        run: mix test
