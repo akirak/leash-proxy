@@ -90,25 +90,27 @@
             };
           };
 
-          # Build the executable package.
-          packages.default = craneLib.buildPackage (
-            commonArgs
-            // {
-              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-              # Ship the default Cedar schema/policy set alongside the binary;
-              # the proxy resolves `policies/` relative paths at runtime.
-              postInstall = ''
-                mkdir -p $out/share/leash-proxy
-                cp -r ${./rust/policies} $out/share/leash-proxy/policies
-                chmod -R u+w $out/share/leash-proxy
-              '';
-            }
-          );
+          packages = {
+            # Build the executable package.
+            leash-proxy = craneLib.buildPackage (
+              commonArgs
+              // {
+                cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+                # Ship the default Cedar schema/policy set alongside the binary;
+                # the proxy resolves `policies/` relative paths at runtime.
+                postInstall = ''
+                  mkdir -p $out/share/leash-proxy
+                  cp -r ${./rust/policies} $out/share/leash-proxy/policies
+                  chmod -R u+w $out/share/leash-proxy
+                '';
+              }
+            );
+          };
 
           devShells.default = craneLib.devShell {
             inputsFrom = [
               # Disable this when you first generate Cargo.lock
-              config.packages.default
+              config.packages.leash-proxy
             ];
 
             packages = [
