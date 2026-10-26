@@ -2,7 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths: [".github/workflows/rust.yml", "rust/**"]
   pull_request:
     paths: [".github/workflows/rust.yml", "rust/**"]
