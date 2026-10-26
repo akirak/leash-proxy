@@ -28,6 +28,24 @@ $ npm run dev --prefix docs/user       # dev server
 $ npm run build --prefix docs/user     # static build into docs/user/.vitepress/dist
 ```
 
+## Local development
+
+Enter the Nix development shell, set up the console once (or after changing
+its dependencies), then start both servers with
+[process-compose](https://github.com/F1bonacc1/process-compose):
+
+```console
+$ nix develop
+$ (cd elixir && mix setup)
+$ process-compose up
+```
+
+The proxy listens on `127.0.0.1:8081` and appends audit events to
+`var/leash-proxy.jsonl`. The Phoenix audit console tails that file and serves
+the UI at <http://localhost:4000>. process-compose's own TUI/API uses port
+`8080`. Stop everything with `Ctrl-C` (or `process-compose down` from another
+terminal).
+
 ## Repository layout
 
 - [`rust/`](rust/) — the proxy library (`leash_proxy`) and binary (`leash-proxy`)

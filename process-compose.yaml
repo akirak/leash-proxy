@@ -1,0 +1,40 @@
+# Run the proxy and the audit console together for local development:
+#
+#   (cd elixir && mix setup)   # first run, or after dependency changes
+#   process-compose up
+#
+# The proxy listens on 127.0.0.1:8081 and writes audit events to
+# var/leash-proxy.jsonl. The console tails that same file and serves the UI on
+# http://localhost:4000. process-compose itself uses :8080 for its TUI/API.
+version: "0.5"
+
+is_strict: true
+log_level: info
+log_location: var/process-compose.log
+
+processes:
+  proxy:
+    command: >-
+      cargo run --manifest-path rust/Cargo.toml --
+      --listen 127.0.0.1:8081
+      --schema rust/policies/schema.cedar
+      --policies rust/policies/policies.cedar
+      --log-file var/leash-proxy.jsonl
+
+  ui:
+    command: mix phx.server
+    working_dir: elixir
+    environment:
+      # Relative to elixir/. The collector places its cursor next to the log.
+      - LEASH_AUDIT_LOG=../var/leash-proxy.jsonl
+    depends_on:
+      proxy:
+        condition: process_started
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: 4000
+        path: /
+        scheme: http
+      initial_delay_seconds: 2
+      period_seconds: 5

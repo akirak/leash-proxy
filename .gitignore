@@ -1,4 +1,5 @@
 /rust/target
+/var
 /docs/user/node_modules
 /docs/user/.vitepress/cache
 /docs/user/.vitepress/dist

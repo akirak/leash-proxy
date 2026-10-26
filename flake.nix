@@ -118,6 +118,7 @@
               pkgs.elixir
               pkgs.nodejs
               pkgs.corepack
+              pkgs.process-compose
               pkgs.beamPackages.expert
             ]
             ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.inotify-tools
