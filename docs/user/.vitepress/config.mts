@@ -1,7 +1,8 @@
 import { defineConfig } from 'vitepress'
 
-// Set `base` to '/<repo-name>/' when deploying to a GitHub Pages project site.
+// Deployed to the GitHub Pages project site for this repository.
 export default defineConfig({
+  base: '/leash-proxy/',
   lang: 'en-US',
   title: 'leash-proxy',
   description:
@@ -28,7 +29,7 @@ export default defineConfig({
       ]
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/akirakomamura/leash-proxy' }
+      { icon: 'github', link: 'https://github.com/akirak/leash-proxy' }
     ],
     outline: { level: [2, 3] }
   }
