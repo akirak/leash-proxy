@@ -108,6 +108,48 @@
                 '';
               }
             );
+
+            leash-collector = pkgs.beamPackages.mixRelease (finalAttrs: {
+              pname = "leash-collector";
+              version = "0.1.0";
+
+              # Only ship application sources, not local deps, builds or databases.
+              src = lib.fileset.toSource {
+                root = ./elixir;
+                fileset = lib.fileset.unions [
+                  ./elixir/assets
+                  ./elixir/config
+                  ./elixir/lib
+                  ./elixir/priv
+                  ./elixir/mix.exs
+                  ./elixir/mix.lock
+                ];
+              };
+
+              mixFodDeps = pkgs.beamPackages.fetchMixDeps {
+                inherit (finalAttrs) pname version src;
+                hash = "sha256-FEAAyF+Ez8GE2bj6YERqp77/Wo5VHd4RCshfwcjy0zE=";
+              };
+
+              # Build the SQLite NIF locally instead of downloading prebuilt code.
+              buildInputs = [ pkgs.sqlite ];
+              env.EXQLITE_USE_SYSTEM = "1";
+
+              # Use Nix-provided asset tools; Mix must not download them in the sandbox.
+              preBuild = ''
+                echo 'config :esbuild, path: "${lib.getExe pkgs.esbuild}", version: "${pkgs.esbuild.version}"' >> config/config.exs
+                echo 'config :tailwind, path: "${lib.getExe pkgs.tailwindcss_4}", version: "${pkgs.tailwindcss_4.version}"' >> config/config.exs
+              '';
+              postBuild = ''
+                mix do deps.loadpaths --no-deps-check + assets.deploy
+              '';
+
+              meta = {
+                description = "Phoenix audit console and collector for leash-proxy";
+                license = lib.licenses.mit;
+                mainProgram = "leash_collector";
+              };
+            });
           };
 
           devShells.default = craneLib.devShell {
