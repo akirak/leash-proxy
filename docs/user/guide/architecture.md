@@ -1,9 +1,9 @@
 # Architecture
 
 ```text
-micro VM guest ──HTTP/CONNECT──► leash-proxy (Rust)
-                                   ├─ policy engines (Cedar, fail-closed)
-                                   └─ audit records (tracing, JSONL) ──► future exporters/collector
+micro VM guest ──HTTP/CONNECT or redirected HTTP/HTTPS──► leash-proxy (Rust)
+                                                         ├─ policy engines (Cedar, fail-closed)
+                                                         └─ audit records (tracing, JSONL) ──► collector
 ```
 
 ## Rust component
@@ -12,9 +12,13 @@ The proxy lives in [`rust/`](https://github.com/akirakomamura/leash-proxy/tree/m
 as a library (`leash_proxy`) plus a thin binary (`leash-proxy`).
 
 - `proxy` — the proxy API surface: `ProxyRequest`, `ProxyState`, `serve`, plus
-  HTTP/1.1 forward-proxying (absolute-form requests), CONNECT tunneling, an
-  `AgentResolver` for micro VM identification, and a counting body that tracks
+  HTTP/1.1 and HTTP/2 forward-proxying, CONNECT tunneling, Linux REDIRECT
+  transparent HTTP/HTTPS interception with independent downstream/upstream
+  TLS ALPN negotiation, an `AgentResolver` for
+  micro VM identification, and a counting body that tracks
   `bytes_in`/`bytes_out` without buffering.
+- `tls` — operator-supplied CA loading and validation, in-memory leaf
+  certificate issuance, and OS trust roots for upstream TLS verification.
 - `policy` — policy engines: the `PolicyEngine` trait, a Cedar engine
   (`CedarEngine`) that loads and validates a schema and policy set up front,
   and an `EngineStack` that composes engines with deny-wins semantics. Any

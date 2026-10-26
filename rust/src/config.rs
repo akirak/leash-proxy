@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, ProxyMode};
 use crate::redact::DEFAULT_HEADER_ALLOWLIST;
 
 /// File-based configuration (`--config`).
@@ -25,12 +25,17 @@ pub struct FileConfig {
 pub struct ServerConfig {
     /// Proxy listen socket.
     pub listen: String,
+    pub mode: ProxyMode,
+    /// Existing PEM CA certificate and private key directory.
+    pub ca_dir: Option<PathBuf>,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             listen: "127.0.0.1:8080".to_string(),
+            mode: ProxyMode::Forward,
+            ca_dir: None,
         }
     }
 }
@@ -80,6 +85,8 @@ impl Default for LoggingConfig {
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
     pub listen: String,
+    pub mode: ProxyMode,
+    pub ca_dir: Option<PathBuf>,
     pub agents: BTreeMap<String, String>,
     pub schema: PathBuf,
     pub policies: Vec<PathBuf>,
@@ -98,6 +105,16 @@ impl ProxyConfig {
         }
 
         let listen = cli.listen.clone().unwrap_or(file.server.listen);
+        let mode = cli.mode.unwrap_or(file.server.mode);
+        let ca_dir = cli.ca_dir.clone().or(file.server.ca_dir);
+        if mode == ProxyMode::Transparent {
+            if !cfg!(target_os = "linux") {
+                return Err("transparent mode is only supported on Linux".to_string());
+            }
+            if ca_dir.is_none() {
+                return Err("transparent mode requires --ca-dir (or server.ca_dir)".to_string());
+            }
+        }
         let schema = cli.schema.clone().unwrap_or(file.policy.schema);
         let policies = cli
             .policies
@@ -125,6 +142,8 @@ impl ProxyConfig {
 
         Ok(Self {
             listen,
+            mode,
+            ca_dir,
             agents,
             schema,
             policies,

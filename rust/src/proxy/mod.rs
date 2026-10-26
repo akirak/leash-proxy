@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod body;
 pub mod server;
+mod transparent;
 pub mod types;
 
 pub use agent::{AgentResolver, StaticAgentResolver};

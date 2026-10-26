@@ -85,13 +85,8 @@
               # https://crane.dev/source-filtering.html?highlight=source#source-filtering
               src = craneLib.cleanCargoSource (craneLib.path ./rust);
 
-              # nativeBuildInputs = with pkgs; [
-              #   pkg-config
-              # ];
-
-              # buildInputs = with pkgs; [
-              #   openssl
-              # ];
+              nativeBuildInputs = with pkgs; [ pkg-config ];
+              buildInputs = with pkgs; [ openssl ];
             };
           };
 

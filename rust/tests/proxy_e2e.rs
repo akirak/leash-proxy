@@ -7,6 +7,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
+use http::{Method, Request, StatusCode, Version};
+use http_body_util::{BodyExt, Full};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -96,6 +100,74 @@ async fn spawn_proxy() -> SocketAddr {
         let _ = serve(listener, state).await;
     });
     addr
+}
+
+async fn h2_proxy_client(
+    proxy: SocketAddr,
+) -> hyper::client::conn::http2::SendRequest<Full<Bytes>> {
+    let stream = TcpStream::connect(proxy).await.unwrap();
+    let (sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    sender
+}
+
+#[tokio::test]
+async fn forwards_and_denies_http2_requests() {
+    let upstream = spawn_http_upstream().await;
+    let proxy = spawn_proxy().await;
+    let mut sender = h2_proxy_client(proxy).await;
+    for (method, status) in [
+        (Method::GET, StatusCode::OK),
+        (Method::POST, StatusCode::FORBIDDEN),
+    ] {
+        let request = Request::builder()
+            .version(Version::HTTP_2)
+            .method(method)
+            .uri(format!("http://{upstream}/repos?token=secret"))
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let response = sender.send_request(request).await.unwrap();
+            assert_eq!(response.status(), status);
+            assert_eq!(response.version(), Version::HTTP_2);
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            if status == StatusCode::OK {
+                assert_eq!(bytes, "echo: GET /repos?token=secret HTTP/1.1");
+            }
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn tunnels_http2_connect_stream() {
+    let echo = spawn_echo_upstream().await;
+    let proxy = spawn_proxy().await;
+    let mut sender = h2_proxy_client(proxy).await;
+    let request = Request::builder()
+        .version(Version::HTTP_2)
+        .method(Method::CONNECT)
+        .uri(echo.to_string())
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let response = sender.send_request(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let upgraded = hyper::upgrade::on(response).await.unwrap();
+        let mut tunnel = TokioIo::new(upgraded);
+        tunnel.write_all(b"h2-tunnel-ping").await.unwrap();
+        let mut echoed = [0; 14];
+        tunnel.read_exact(&mut echoed).await.unwrap();
+        assert_eq!(&echoed, b"h2-tunnel-ping");
+    })
+    .await
+    .unwrap();
 }
 
 /// Send a raw request to the proxy and read everything until close.

@@ -1,12 +1,10 @@
-//! Proxy server: TCP listener, HTTP/1.1 proxy connection handling, request
+//! Proxy server: TCP listener, HTTP/1.1 and HTTP/2 connection handling, request
 //! forwarding, and CONNECT tunneling.
 //!
 //! Every request is evaluated against the configured [`PolicyEngine`]
 //! *before* any upstream connection is opened or bytes are forwarded; a
-//! deny produces a 403 and an audit record. Tunneling forwards opaque bytes
-//! after a CONNECT allow decision. (TLS MITM termination is a future
-//! enhancement; the request/response and audit types already carry scheme
-//! and TLS metadata for it.)
+//! deny produces a 403 and an audit record. Forward mode tunnels CONNECT
+//! traffic; transparent mode terminates TLS using an operator-supplied CA.
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -16,21 +14,24 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http::header::CONTENT_TYPE;
-use http::{HeaderMap, Method, Request, Response, StatusCode};
+use http::{HeaderMap, Method, Request, Response, StatusCode, Version};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::rustls;
 
+use super::transparent::{self, InterceptedConnection, TransparentConfig};
 use crate::audit::AuditRecord;
 use crate::policy::{PolicyDecision, PolicyEngine};
 use crate::proxy::agent::AgentResolver;
 use crate::proxy::body::{CountedBody, OnFinish, SharedCounter};
 use crate::proxy::types::{ProxyRequest, Scheme, TlsInfo};
+use crate::tls::CertificateAuthority;
 
 /// Error type for forwarded bodies.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -66,6 +67,7 @@ pub struct ProxyState {
     resolver: Arc<dyn AgentResolver>,
     header_allowlist: Vec<String>,
     client: ForwardingClient,
+    pub(super) transparent: Option<TransparentConfig>,
 }
 
 impl ProxyState {
@@ -82,7 +84,19 @@ impl ProxyState {
             resolver,
             header_allowlist,
             client,
+            transparent: None,
         }
+    }
+
+    /// Enable Linux REDIRECT interception with an existing CA. Upstream
+    /// certificates are verified using the supplied client trust configuration.
+    pub fn with_transparent(
+        mut self,
+        ca: Arc<CertificateAuthority>,
+        upstream: Arc<rustls::ClientConfig>,
+    ) -> Self {
+        self.transparent = Some(TransparentConfig { ca, upstream });
+        self
     }
 }
 
@@ -110,15 +124,54 @@ async fn handle_connection(
     peer: SocketAddr,
     state: Arc<ProxyState>,
 ) -> Result<(), BoxError> {
+    if state.transparent.is_some() {
+        let destination = transparent::original_destination(&stream)?;
+        let local = stream.local_addr()?;
+        if destination.ip().to_canonical() == local.ip().to_canonical()
+            && destination.port() == local.port()
+        {
+            return Err(
+                "transparent connection was not redirected; refusing to proxy to itself".into(),
+            );
+        }
+        return transparent::handle_connection(stream, peer, destination, state).await;
+    }
+    serve_http(stream, peer, state, None).await
+}
+
+pub(super) async fn serve_http<I>(
+    stream: I,
+    peer: SocketAddr,
+    state: Arc<ProxyState>,
+    intercepted: Option<InterceptedConnection>,
+) -> Result<(), BoxError>
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let transparent = intercepted.is_some();
+    let version = intercepted.as_ref().and_then(|conn| conn.http_version);
     let service = service_fn(move |req| {
         let state = state.clone();
-        async move { handle_request(req, peer, state).await }
+        let intercepted = intercepted.clone();
+        async move { handle_request(req, peer, state, intercepted).await }
     });
-    hyper::server::conn::http1::Builder::new()
-        .preserve_header_case(true)
-        .serve_connection(TokioIo::new(stream), service)
-        .with_upgrades()
-        .await?;
+    let mut builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+    builder.http1().preserve_header_case(true);
+    let builder = match version {
+        Some(Version::HTTP_2) => builder.http2_only(),
+        Some(_) => builder.http1_only(),
+        None => builder,
+    };
+    if transparent {
+        // TLS follows ALPN strictly; cleartext detects the HTTP/2 preface.
+        builder
+            .serve_connection(TokioIo::new(stream), service)
+            .await?;
+    } else {
+        builder
+            .serve_connection_with_upgrades(TokioIo::new(stream), service)
+            .await?;
+    }
     Ok(())
 }
 
@@ -135,7 +188,7 @@ enum Target {
     },
 }
 
-fn classify(req: &Request<Incoming>) -> Result<Target, &'static str> {
+fn classify(req: &Request<Incoming>, intercepted: bool) -> Result<Target, &'static str> {
     if req.method() == Method::CONNECT {
         let authority = req
             .uri()
@@ -150,18 +203,25 @@ fn classify(req: &Request<Incoming>) -> Result<Target, &'static str> {
     let uri = req.uri();
     let scheme = match uri.scheme_str() {
         Some("http") => Scheme::Http,
+        Some("https") if intercepted => Scheme::Https,
         Some("https") => return Err("https requests must be sent through a CONNECT tunnel"),
         _ => return Err("not a proxy request: use absolute-form URIs or CONNECT"),
     };
     let authority = uri.authority().ok_or("proxy request without authority")?;
-    let port = authority.port_u16().unwrap_or(80);
+    let port = authority
+        .port_u16()
+        .unwrap_or(if scheme == Scheme::Https { 443 } else { 80 });
     let path = uri
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
     Ok(Target::Http {
         scheme,
-        host: authority.host().to_string(),
+        host: authority
+            .host()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_string(),
         port,
         path,
     })
@@ -171,20 +231,38 @@ fn classify(req: &Request<Incoming>) -> Result<Target, &'static str> {
 /// or tunnel. Never errors: failures become 4xx/5xx responses with audit
 /// records.
 async fn handle_request(
-    req: Request<Incoming>,
+    mut req: Request<Incoming>,
     peer: SocketAddr,
     state: Arc<ProxyState>,
+    intercepted: Option<InterceptedConnection>,
 ) -> Result<Response<ProxyBody>, Infallible> {
     let started = Instant::now();
     let request_id = uuid::Uuid::new_v4().to_string();
 
-    let target = match classify(&req) {
+    let tls = if intercepted
+        .as_ref()
+        .is_some_and(|conn| conn.tls_host.is_some())
+    {
+        TlsInfo::Terminated
+    } else {
+        TlsInfo::None
+    };
+    let classified = match &intercepted {
+        Some(conn) => conn
+            .prepare_request(&mut req)
+            .and_then(|()| classify(&req, true)),
+        None => classify(&req, false),
+    };
+    let target = match classified {
         Ok(target) => target,
         Err(reason) => {
-            let proxy_request = origin_request(&req, &request_id, peer, &state);
+            let mut proxy_request = origin_request(&req, &request_id, peer, &state);
+            if tls == TlsInfo::Terminated {
+                proxy_request.scheme = Scheme::Https;
+            }
             AuditRecord::new(&proxy_request, &state.header_allowlist)
                 .decision(&PolicyDecision::deny("proxy", reason))
-                .tls(TlsInfo::None)
+                .tls(tls)
                 .outcome(StatusCode::BAD_REQUEST.as_u16(), 0, 0, started)
                 .emit();
             tracing::info!(
@@ -207,7 +285,7 @@ async fn handle_request(
             host,
             port,
             path,
-        } => (*scheme, host, *port, path.clone(), TlsInfo::None),
+        } => (*scheme, host, *port, path.clone(), tls),
     };
 
     let proxy_request = ProxyRequest {
@@ -265,7 +343,9 @@ async fn handle_request(
             state,
             started,
         )),
-        Target::Http { .. } => forward_request(req, proxy_request, decision, state, started).await,
+        Target::Http { .. } => {
+            forward_request(req, proxy_request, decision, state, started, intercepted).await
+        }
     }
 }
 
@@ -377,26 +457,45 @@ async fn forward_request(
     decision: PolicyDecision,
     state: Arc<ProxyState>,
     started: Instant,
+    intercepted: Option<InterceptedConnection>,
 ) -> Result<Response<ProxyBody>, Infallible> {
+    let tls = if intercepted
+        .as_ref()
+        .is_some_and(|conn| conn.tls_host.is_some())
+    {
+        TlsInfo::Terminated
+    } else {
+        TlsInfo::None
+    };
     let (mut parts, body) = req.into_parts();
-
-    // The absolute-form URI is kept as-is: the forwarding client uses its
-    // authority to select the upstream connection, and rewrites it to
-    // origin-form when speaking HTTP/1.1 to the origin server.
-    strip_hop_by_hop(&mut parts.headers);
 
     let bytes_in: SharedCounter = Arc::new(AtomicU64::new(0));
     let bytes_out: SharedCounter = Arc::new(AtomicU64::new(0));
 
+    // Forward-mode cleartext origins use HTTP/1.1 even when the downstream
+    // client uses HTTP/2. Transparent TLS selects its upstream version via ALPN.
+    if intercepted.is_none() {
+        parts.version = Version::HTTP_11;
+        strip_hop_by_hop(&mut parts.headers, false);
+    }
     let upstream_request =
         Request::from_parts(parts, CountedBody::counting(body, bytes_in.clone()));
-    let upstream_response = match state.client.request(upstream_request).await {
+    let result = if let Some(connection) = intercepted {
+        intercepted_request(upstream_request, &connection, &proxy_request.host, &state).await
+    } else {
+        state
+            .client
+            .request(upstream_request)
+            .await
+            .map_err(BoxError::from)
+    };
+    let upstream_response = match result {
         Ok(response) => response,
         Err(err) => {
             let sent = bytes_in.load(Ordering::Relaxed);
             AuditRecord::new(&proxy_request, &state.header_allowlist)
                 .decision(&decision)
-                .tls(TlsInfo::None)
+                .tls(tls)
                 .error(format!("upstream request failed: {err}"))
                 .outcome(StatusCode::BAD_GATEWAY.as_u16(), sent, 0, started)
                 .emit();
@@ -416,14 +515,17 @@ async fn forward_request(
 
     let status = upstream_response.status().as_u16();
     let (mut up_parts, up_body) = upstream_response.into_parts();
-    strip_hop_by_hop(&mut up_parts.headers);
+    // Protocol negotiation is independent on each hop. In particular an
+    // HTTP/2 origin response must not be serialized as HTTP/2 on an HTTP/1 hop.
+    up_parts.version = proxy_request.version;
+    strip_hop_by_hop(&mut up_parts.headers, false);
 
     // The audit record for this request is emitted when the response body
     // finishes streaming back to the client, so `bytes_in`/`bytes_out` are
     // complete.
     let finish = AuditRecord::new(&proxy_request, &state.header_allowlist)
         .decision(&decision)
-        .tls(TlsInfo::None);
+        .tls(tls);
     let on_finish: OnFinish = Box::new(move |bytes_out_total| {
         let sent = bytes_in.load(Ordering::Relaxed);
         finish
@@ -437,9 +539,72 @@ async fn forward_request(
     Ok(Response::from_parts(up_parts, body))
 }
 
-fn strip_hop_by_hop(headers: &mut HeaderMap) {
+async fn intercepted_request(
+    mut req: Request<CountedBody<Incoming>>,
+    connection: &InterceptedConnection,
+    host: &str,
+    state: &ProxyState,
+) -> Result<Response<Incoming>, BoxError> {
+    let config = state
+        .transparent
+        .as_ref()
+        .ok_or("missing transparent configuration")?;
+    let (io, version) = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        transparent::connect_upstream(connection, host, config),
+    )
+    .await??;
+    *req.version_mut() = version;
+    strip_hop_by_hop(req.headers_mut(), version == Version::HTTP_2);
+    if version == Version::HTTP_2 {
+        // Keep scheme and authority for HTTP/2 pseudo-headers.
+        let (mut sender, conn) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(io)).await?;
+        tokio::spawn(async move {
+            if let Err(err) = conn.await {
+                tracing::debug!(target: "leash_proxy::proxy", %err, "intercepted HTTP/2 upstream connection closed");
+            }
+        });
+        Ok(sender.send_request(req).await?)
+    } else {
+        *req.uri_mut() = req
+            .uri()
+            .path_and_query()
+            .ok_or("missing request path")?
+            .as_str()
+            .parse()?;
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(io)).await?;
+        tokio::spawn(async move {
+            if let Err(err) = conn.await {
+                tracing::debug!(target: "leash_proxy::proxy", %err, "intercepted upstream connection closed");
+            }
+        });
+        Ok(sender.send_request(req).await?)
+    }
+}
+
+fn strip_hop_by_hop(headers: &mut HeaderMap, preserve_te_trailers: bool) {
+    // HTTP/2 forbids connection-specific headers, with one request-header
+    // exception: TE: trailers (required by protocols such as gRPC).
+    let te_trailers = preserve_te_trailers
+        && headers
+            .get(http::header::TE)
+            .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"trailers"));
+    let connection_headers: Vec<_> = headers
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|name| http::header::HeaderName::from_bytes(name.trim().as_bytes()).ok())
+        .collect();
+    for name in connection_headers {
+        headers.remove(name);
+    }
     for name in HOP_BY_HOP_HEADERS {
         headers.remove(*name);
+    }
+    if te_trailers {
+        headers.insert(http::header::TE, http::HeaderValue::from_static("trailers"));
     }
 }
 

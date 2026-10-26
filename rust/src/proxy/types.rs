@@ -11,9 +11,8 @@ use http::{HeaderMap, Method, Version};
 pub enum Scheme {
     /// Plain HTTP, forwarded in cleartext.
     Http,
-    /// HTTPS. Currently this only appears for requests received after TLS
-    /// termination (future MITM mode); absolute-form `https://` requests on
-    /// the plain proxy port are rejected.
+    /// HTTPS received after transparent TLS termination. Absolute-form
+    /// `https://` requests on the forward proxy port are rejected.
     Https,
     /// A CONNECT tunnel (`CONNECT host:port`).
     Tunnel,
@@ -42,8 +41,7 @@ pub enum TlsInfo {
     None,
     /// The connection is a CONNECT tunnel; the proxy did not terminate TLS.
     Tunnel,
-    /// The proxy terminated TLS (MITM mode; reserved for the future
-    /// interception layer).
+    /// The proxy terminated TLS in transparent interception mode.
     Terminated,
 }
 
@@ -69,7 +67,7 @@ pub struct ProxyRequest {
     pub source: SocketAddr,
     /// HTTP method, e.g. `GET` or `CONNECT`.
     pub method: Method,
-    /// Request scheme (`http`, or `tunnel` for CONNECT).
+    /// Request scheme (`http`, `https`, or `tunnel` for CONNECT).
     pub scheme: Scheme,
     /// Destination host (without port).
     pub host: String,

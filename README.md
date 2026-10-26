@@ -1,9 +1,10 @@
 # leash-proxy
 
-leash-proxy is a forward proxy written in Rust that sits between micro VM
-guests and the outside world. HTTP requests from the guests are forwarded
-through the proxy and evaluated against [Cedar](https://www.cedarpolicy.com/)
-policies with a fail-closed posture, and every request is recorded as a
+leash-proxy is an egress proxy written in Rust that sits between micro VM
+guests and the outside world. It supports HTTP forwarding, CONNECT tunnels,
+and Linux transparent HTTP/HTTPS interception (HTTP/1.1 and HTTP/2) with a
+[bring-your-own CA](docs/user/guide/configuration.md#bring-your-own-ca).
+Requests are evaluated against [Cedar](https://www.cedarpolicy.com/) policies with a fail-closed posture, and every request is recorded as a
 structured JSONL audit record.
 
 ## Documentation

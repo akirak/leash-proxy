@@ -17,8 +17,8 @@
 //! - [`logging`]: JSONL `tracing` setup.
 //! - [`redact`]: credential hygiene (path and header redaction).
 //!
-//! Exporters for downstream collection and TLS MITM termination are planned
-//! as future enhancements.
+//! Transparent HTTP/HTTPS interception uses an operator-supplied CA.
+//! Exporters for downstream collection are planned as future enhancements.
 
 pub mod audit;
 pub mod cli;
@@ -27,3 +27,4 @@ pub mod logging;
 pub mod policy;
 pub mod proxy;
 pub mod redact;
+pub mod tls;

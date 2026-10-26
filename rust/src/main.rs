@@ -4,7 +4,7 @@ use std::sync::Arc;
 use clap::Parser;
 use tokio::net::TcpListener;
 
-use leash_proxy::cli::Cli;
+use leash_proxy::cli::{Cli, ProxyMode};
 use leash_proxy::config::ProxyConfig;
 use leash_proxy::logging;
 use leash_proxy::policy::{CedarEngine, EngineStack, PolicyEngine};
@@ -49,6 +49,36 @@ async fn main() -> ExitCode {
     let engine: Arc<dyn PolicyEngine> = Arc::new(EngineStack::new(vec![cedar]));
     let resolver = Arc::new(StaticAgentResolver::from_entries(&config.agents));
 
+    // Validate operator-supplied credentials before opening the listener.
+    // Never generate or overwrite a CA as a fallback.
+    let ca = match config
+        .ca_dir
+        .as_deref()
+        .map(leash_proxy::tls::CertificateAuthority::load)
+        .transpose()
+    {
+        Ok(ca) => ca.map(Arc::new),
+        Err(err) => {
+            tracing::error!(target: "leash_proxy", %err, "failed to load CA");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut state = ProxyState::new(engine, resolver, config.header_allowlist.clone());
+    if config.mode == ProxyMode::Transparent {
+        let upstream = match leash_proxy::tls::upstream_config() {
+            Ok(config) => config,
+            Err(err) => {
+                tracing::error!(target: "leash_proxy", %err, "failed to load upstream TLS trust roots");
+                return ExitCode::FAILURE;
+            }
+        };
+        state = state.with_transparent(
+            ca.expect("validated transparent CA configuration"),
+            upstream,
+        );
+    }
+    let state = Arc::new(state);
+
     let listener = match TcpListener::bind(&config.listen).await {
         Ok(listener) => listener,
         Err(err) => {
@@ -57,14 +87,10 @@ async fn main() -> ExitCode {
         }
     };
 
-    let state = Arc::new(ProxyState::new(
-        engine,
-        resolver,
-        config.header_allowlist.clone(),
-    ));
     tracing::info!(
         target: "leash_proxy",
         listen = %config.listen,
+        mode = ?config.mode,
         policy_engine = "cedar",
         policy_files = config.policies.len(),
         "leash-proxy ready; waiting for agent traffic"
