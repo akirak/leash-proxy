@@ -9,9 +9,6 @@ hero:
       text: Get started
       link: /guide/getting-started
     - theme: alt
-      text: Why leash-proxy?
-      link: /guide/introduction
-    - theme: alt
       text: Cedar policies
       link: /guide/policies
 
