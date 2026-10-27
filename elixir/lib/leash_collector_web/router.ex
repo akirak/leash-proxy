@@ -22,10 +22,11 @@ defmodule LeashCollectorWeb.Router do
     live "/events/:request_id", EventLive.Show, :show
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", LeashCollectorWeb do
-  #   pipe_through :api
-  # end
+  scope "/api", LeashCollectorWeb do
+    pipe_through :api
+
+    post "/audit/events", AuditEventController, :create
+  end
 
   # Enable LiveDashboard in development
   if Application.compile_env(:leash_collector, :dev_routes) do

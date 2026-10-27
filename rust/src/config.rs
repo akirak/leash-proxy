@@ -18,6 +18,7 @@ pub struct FileConfig {
     pub agents: BTreeMap<String, String>,
     pub policy: PolicyFiles,
     pub logging: LoggingConfig,
+    pub phoenix: Option<crate::phoenix::PhoenixConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +93,7 @@ pub struct ProxyConfig {
     pub policies: Vec<PathBuf>,
     pub log_file: Option<PathBuf>,
     pub header_allowlist: Vec<String>,
+    pub phoenix: Option<crate::phoenix::PhoenixConfig>,
 }
 
 impl ProxyConfig {
@@ -134,6 +136,14 @@ impl ProxyConfig {
             return Err("header allowlist must not be empty".to_string());
         }
 
+        let mut phoenix = file.phoenix;
+        if let Some(endpoint) = &cli.exporter_url {
+            phoenix.get_or_insert_with(Default::default).endpoint = endpoint.clone();
+        }
+        if let Some(config) = &phoenix {
+            config.validate()?;
+        }
+
         let agents: BTreeMap<String, String> = file
             .agents
             .into_iter()
@@ -149,6 +159,7 @@ impl ProxyConfig {
             policies,
             log_file,
             header_allowlist,
+            phoenix,
         })
     }
 }

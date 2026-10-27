@@ -19,6 +19,14 @@ const AUDIT_TARGET: &str = "leash_proxy::audit";
 /// Install the global subscriber. The returned guard must be kept alive
 /// for the life of the process (it flushes the background writer).
 pub fn init(log_file: Option<&Path>) -> Result<WorkerGuard, String> {
+    init_with_phoenix(log_file, None)
+}
+
+/// Like [`init`], with an optional best-effort Phoenix audit sink.
+pub fn init_with_phoenix(
+    log_file: Option<&Path>,
+    phoenix: Option<crate::phoenix::PhoenixWriter>,
+) -> Result<WorkerGuard, String> {
     let (writer, guard) = match log_file {
         Some(path) => {
             if let Some(parent) = path.parent()
@@ -69,6 +77,15 @@ pub fn init(log_file: Option<&Path>) -> Result<WorkerGuard, String> {
                 .with_writer(writer)
                 .with_filter(audit_filter),
         )
+        .with(phoenix.map(|writer| {
+            fmt::layer()
+                .json()
+                .flatten_event(true)
+                .with_current_span(false)
+                .with_span_list(false)
+                .with_writer(writer)
+                .with_filter(EnvFilter::new(format!("{AUDIT_TARGET}=info")))
+        }))
         .init();
 
     Ok(guard)

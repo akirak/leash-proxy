@@ -27,7 +27,9 @@ config :leash_collector, LeashCollectorWeb.Endpoint,
 # (`leash-proxy --log-file PATH`). Configure per deployment in releases.
 config :leash_collector,
   audit_log_path: System.get_env("LEASH_AUDIT_LOG", "tmp/audit.jsonl"),
-  audit_cursor_path: System.get_env("LEASH_AUDIT_CURSOR") || nil
+  audit_cursor_path: System.get_env("LEASH_AUDIT_CURSOR") || nil,
+  # HTTP push ingestion is disabled unless a nonempty shared token is supplied.
+  audit_ingest_token: System.get_env("LEASH_EXPORTER_TOKEN")
 
 if config_env() == :dev do
   # Reload browser tabs when matching files change.

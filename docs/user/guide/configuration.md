@@ -34,6 +34,47 @@ header_allowlist = ["host", "user-agent", "accept", "content-type", "content-len
 | `logging.log_file` | JSONL log destination; stdout when absent. |
 | `logging.header_allowlist` | Headers that may be recorded in audit logs. |
 
+## Phoenix HTTP exporter
+
+File tailing remains the default. To push audit events to a separate Phoenix
+collector, set the same nonempty `LEASH_EXPORTER_TOKEN` environment variable in
+both processes, and add this optional proxy configuration:
+
+```toml
+[phoenix]
+endpoint = "http://127.0.0.1:4000/api/audit/events"
+token_env = "LEASH_EXPORTER_TOKEN" # environment variable containing the shared token
+queue_capacity = 1024
+batch_size = 200
+flush_interval_ms = 1000
+request_timeout_ms = 5000
+shutdown_timeout_ms = 5000
+max_retries = 3
+```
+
+`--exporter-url URL` enables export without a TOML section, or overrides
+only its endpoint. Without either setting, no exporter is started. Unknown
+keys and invalid settings fail startup. `queue_capacity` accepts 1–65536,
+`batch_size` 1–200, all millisecond settings 1–60000, and `max_retries` 0–10.
+A missing, empty, or invalid token fails proxy startup; the collector disables
+HTTP ingestion unless its token is configured. Tokens are not accepted in
+URLs, TOML, or CLI arguments. `token_env` changes the proxy's environment
+variable name only; the collector always reads `LEASH_EXPORTER_TOKEN`.
+
+Use **HTTPS across hosts**: server certificates are verified against the OS
+trust store. Plain HTTP is intended only for a trusted local connection.
+The exporter connects directly (ignoring HTTP proxy environment variables)
+and does not follow redirects or log tokens, request payloads, or response
+bodies. This authenticates ingestion, not the collector's browser UI; keep
+the UI behind a separate access boundary.
+
+Batches are JSON objects of the form `{"events": [audit_event, ...]}` posted
+to `/api/audit/events`. The collector validates the entire batch before
+inserting, acknowledges only after insertion, and deduplicates by
+`request_id`. File tailing and push export can safely index the same events.
+See [Audit log](/guide/audit-log#phoenix-export-delivery) for delivery limits
+and recovery.
+
 ## Bring your own CA
 
 Use `--ca-dir /etc/leash-proxy/ca` or `server.ca_dir` to supply an existing

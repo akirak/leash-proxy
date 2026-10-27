@@ -22,9 +22,20 @@ async fn main() -> ExitCode {
         }
     };
 
+    let (phoenix_writer, phoenix_exporter) = match config.phoenix.clone() {
+        Some(phoenix) => match leash_proxy::phoenix::PhoenixExporter::start(phoenix) {
+            Ok((writer, exporter)) => (Some(writer), Some(exporter)),
+            Err(err) => {
+                eprintln!("leash-proxy: failed to initialize Phoenix export: {err}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => (None, None),
+    };
+
     // Keep alive for the process lifetime: flushes the background log
-    // writer.
-    let _log_guard = match logging::init(config.log_file.as_deref()) {
+    // writer independently of the best-effort exporter.
+    let _log_guard = match logging::init_with_phoenix(config.log_file.as_deref(), phoenix_writer) {
         Ok(guard) => guard,
         Err(err) => {
             eprintln!("leash-proxy: failed to initialize logging: {err}");
@@ -96,11 +107,12 @@ async fn main() -> ExitCode {
         "leash-proxy ready; waiting for agent traffic"
     );
 
+    let mut exit_code = ExitCode::SUCCESS;
     tokio::select! {
         result = serve(listener, state) => {
             if let Err(err) = result {
                 tracing::error!(target: "leash_proxy", %err, "proxy server terminated");
-                return ExitCode::FAILURE;
+                exit_code = ExitCode::FAILURE;
             }
         }
         _ = shutdown_signal() => {
@@ -108,7 +120,10 @@ async fn main() -> ExitCode {
         }
     }
 
-    ExitCode::SUCCESS
+    if let Some(exporter) = phoenix_exporter {
+        exporter.shutdown().await;
+    }
+    exit_code
 }
 
 async fn shutdown_signal() {

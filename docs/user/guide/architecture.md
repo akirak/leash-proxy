@@ -30,6 +30,9 @@ as a library (`leash_proxy`) plus a thin binary (`leash-proxy`).
   and only allowlisted headers are ever recorded.
 - `logging` — JSONL `tracing` output to stdout or an append-only file; audit
   events always flow at INFO regardless of `RUST_LOG`.
+- `phoenix` — optional authenticated HTTP(S) export of audit events from a
+  bounded, nonblocking queue, with batching, bounded retries, and shutdown
+  draining. Export failures never gate policy checks or forwarding.
 
 Downstream, the JSONL log is the durable source of truth (ADR 0002); the
 Elixir/Phoenix collector and monitoring UI run as a separate process (ADR 0003).

@@ -46,6 +46,7 @@ sensitive even though the proxy redacts request data.
 | --- | --- | --- |
 | `LEASH_AUDIT_LOG` | `tmp/audit.jsonl` | Proxy's append-only JSONL log |
 | `LEASH_AUDIT_CURSOR` | `.<log filename>.cursor` beside log | Collector checkpoint; must be writable |
+| `LEASH_EXPORTER_TOKEN` | unset (HTTP ingestion disabled) | Shared bearer token for `/api/audit/events` |
 | `PORT` | `4000` | Web listener port |
 | `DATABASE_PATH` | required in production | SQLite database path |
 | `SECRET_KEY_BASE` | required in production | Generate with `mix phx.gen.secret` |
@@ -57,6 +58,30 @@ Development stores data in `leash_collector_dev.db`. Tests use a separate,
 partition-aware database and disable the application-level ingestion pipeline.
 Releases migrate the database on startup. Production binds on all interfaces by
 default; restrict network access or configure the endpoint before deployment.
+
+## HTTP push ingestion
+
+The Rust proxy can optionally push batches to `POST /api/audit/events` without
+sharing a filesystem. Set the same nonempty `LEASH_EXPORTER_TOKEN` in both
+processes, and configure `--exporter-url` on the proxy. See
+[exporter configuration](../docs/user/guide/configuration.md#phoenix-http-exporter).
+Use HTTPS for remote connections; plain HTTP is only suitable on a trusted
+local network. The existing browser UI remains unauthenticated.
+
+Requests must supply `Authorization: Bearer <token>` and a JSON body
+`{"events": [event, ...]}` containing 1–200 flattened `leash_proxy::audit`
+records. The endpoint normalizes records using the existing decoder, rejects
+an entire malformed batch with HTTP 422, and commits directly through the
+idempotent batch sink before responding `200 {"inserted": N}`. Database
+failures return non-success responses so the proxy can retry. Unconfigured
+ingestion returns 503; missing/invalid authorization returns 401. Validation
+errors do not echo tokens or raw invalid events.
+
+HTTP push and Broadway file tailing can run together; duplicate request IDs
+are ignored. Push delivery is best effort, with a bounded in-memory queue and
+limited retries. Keep the proxy's JSONL file for recovery; no disk spool or
+automatic HTTP replay is implemented. File tailing below remains the durable
+replay mechanism.
 
 ## Delivery and replay
 

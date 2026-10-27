@@ -52,4 +52,9 @@ pub struct Cli {
     /// Overrides the config file and the default allowlist.
     #[arg(long = "header-allowlist")]
     pub header_allowlist: Option<Vec<String>>,
+
+    /// Push audit batches to the Phoenix collector's HTTP(S) endpoint.
+    /// Requires the token named by phoenix.token_env (default LEASH_EXPORTER_TOKEN).
+    #[arg(long)]
+    pub exporter_url: Option<String>,
 }

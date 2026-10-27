@@ -15,15 +15,16 @@
 //!   [`policy::CedarEngine`], [`policy::EngineStack`]).
 //! - [`audit`]: structured audit records ([`audit::AuditRecord`]).
 //! - [`logging`]: JSONL `tracing` setup.
+//! - [`phoenix`]: optional bounded, asynchronous HTTP audit export.
 //! - [`redact`]: credential hygiene (path and header redaction).
 //!
 //! Transparent HTTP/HTTPS interception uses an operator-supplied CA.
-//! Exporters for downstream collection are planned as future enhancements.
 
 pub mod audit;
 pub mod cli;
 pub mod config;
 pub mod logging;
+pub mod phoenix;
 pub mod policy;
 pub mod proxy;
 pub mod redact;
