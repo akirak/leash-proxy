@@ -182,6 +182,8 @@
             }/lib/rustlib/src/rust/library";
           };
 
+          checks = config.packages;
+
           treefmt = {
             projectRootFile = "flake.nix";
             settings.excludes = [
