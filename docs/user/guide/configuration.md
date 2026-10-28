@@ -174,7 +174,10 @@ Origins without ALPN fall back to HTTP/1.1. No additional flags are needed.
 Multiplexed HTTP/2 requests are checked and audited separately, including
 denied streams on otherwise allowed connections. The `:authority` pseudo-header
 is used for destination policy checks and must agree with SNI and any supplied
-Host header. The `:scheme` must match the intercepted transport. Streaming
+Host header. The `:scheme` must match the intercepted transport. When the
+upstream hop is HTTP/2, the authority is conveyed only by `:authority` and no
+`Host` header is sent (strict origins such as Google's reject a `Host` header
+on HTTP/2 as malformed); HTTP/1.1 origins receive `Host` as usual. Streaming
 bodies and HTTP/2 trailers are forwarded without buffering; `TE: trailers`
 is retained when sending HTTP/2 requests.
 

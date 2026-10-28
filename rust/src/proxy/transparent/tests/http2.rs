@@ -240,6 +240,58 @@ async fn negotiates_http2_and_http1_independently_on_each_tls_hop() {
 }
 
 #[tokio::test]
+async fn upstream_host_header_follows_upstream_protocol() {
+    // HTTP/2 conveys the authority only via :authority (RFC 9113 §8.3):
+    // strict origins such as GFE reset streams that also carry a Host
+    // header. HTTP/1.1 origins still require Host.
+    for upstream in [Some(Version::HTTP_2), Some(Version::HTTP_11)] {
+        for downstream_h2 in [true, false] {
+            let (dir, cert) = fixture();
+            let ca = Arc::new(CertificateAuthority::load(dir.path()).unwrap());
+            let (state, _) = state(ca.clone(), alpn_client(&cert, &[b"h2", b"http/1.1"]));
+            let (destination, observed, task) = tls_origin(&ca, upstream).await;
+            let addr = interceptor(state, destination).await;
+            if downstream_h2 {
+                let mut sender =
+                    h2_client(tls_client(addr, alpn_client(&cert, &[b"h2"])).await).await;
+                let (status, _, _) = response(
+                    &mut sender,
+                    request(
+                        Method::GET,
+                        format!("https://example.test:{}/", destination.port()),
+                    ),
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK);
+            } else {
+                let tls = tls_client(addr, alpn_client(&cert, &[b"http/1.1"])).await;
+                let response = exchange(
+                    tls,
+                    "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+                assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+            }
+            let requests = observed.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            if upstream == Some(Version::HTTP_2) {
+                assert!(
+                    !requests[0].headers.contains_key(HOST),
+                    "Host forwarded on HTTP/2 upstream hop"
+                );
+                assert_eq!(requests[0].uri.authority().unwrap().host(), "example.test");
+            } else {
+                let host = requests[0].headers.get(HOST).unwrap();
+                let host = host.to_str().unwrap();
+                let host = host.rsplit_once(':').map_or(host, |(host, _)| host);
+                assert_eq!(host, "example.test");
+            }
+            task.abort();
+        }
+    }
+}
+
+#[tokio::test]
 async fn multiplexed_streams_are_independently_checked_without_opening_denied_origins() {
     let (dir, cert) = fixture();
     let ca = Arc::new(CertificateAuthority::load(dir.path()).unwrap());

@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use http::header::CONTENT_TYPE;
+use http::header::{CONTENT_TYPE, HOST};
 use http::{HeaderMap, Method, Request, Response, StatusCode, Version};
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
@@ -557,7 +557,11 @@ async fn intercepted_request(
     *req.version_mut() = version;
     strip_hop_by_hop(req.headers_mut(), version == Version::HTTP_2);
     if version == Version::HTTP_2 {
-        // Keep scheme and authority for HTTP/2 pseudo-headers.
+        // Keep scheme and authority for HTTP/2 pseudo-headers, but drop the
+        // Host header: RFC 9113 §8.3 conveys the authority via :authority, and
+        // strict origins (for example Google's GFE) reset the stream with a
+        // protocol error when a Host header is sent alongside :authority.
+        req.headers_mut().remove(HOST);
         let (mut sender, conn) =
             hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(io)).await?;
         tokio::spawn(async move {
