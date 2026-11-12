@@ -128,7 +128,7 @@
 
               mixFodDeps = pkgs.beamPackages.fetchMixDeps {
                 inherit (finalAttrs) pname version src;
-                hash = "sha256-FEAAyF+Ez8GE2bj6YERqp77/Wo5VHd4RCshfwcjy0zE=";
+                hash = "sha256-cEfn//bsUDOY+fSV7xQrTDaxbKSbtS9K4P1X5RK1pK8=";
               };
 
               # Build the SQLite NIF locally instead of downloading prebuilt code.
